@@ -1,0 +1,639 @@
+library(httr)
+library(shiny)
+library(shinydashboard)
+library(caret)
+library(ggplot2)
+library(dplyr)
+library(pROC)
+library(shinyjs)
+library(rpart)
+library(rpart.plot)
+library(randomForest)  # New library for Random Forest
+
+generateContent <- function(prompt, api_key) {
+  headers <- c(`Content-Type` = "application/json")
+  params <- list(`key` = api_key)
+  data <- sprintf('{"contents": [{"parts":[{"text": "%s"}]}]}', prompt)
+  res <- httr::POST(
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+    httr::add_headers(.headers = headers),
+    query = params,
+    body = data
+  )
+  return(content(res)$candidates[[1]]$content$parts[[1]]$text)
+}
+
+# Load and preprocess data
+dfCardio <- dfCardio[-c(1)]
+dfCardio$age <- dfCardio$age / 365
+
+dfCardio$gender[dfCardio$gender == 1] <- 0  # women
+dfCardio$gender[dfCardio$gender == 2] <- 1  # men 
+
+# Remove outliers and preprocess
+dfCardio <- dfCardio[dfCardio$ap_lo <= 200 & dfCardio$ap_lo >= 30, ]
+dfCardio <- dfCardio[dfCardio$ap_hi <= 260 & dfCardio$ap_hi >= 50, ]
+
+# Coerce column types
+colnames_df <- as.vector(colnames(dfCardio))
+numeric_vars <- c("age", "height", "weight", "ap_hi", "ap_lo")
+categorical_vars <- colnames_df[!colnames_df %in% numeric_vars]
+dfCardio[categorical_vars] <- lapply(dfCardio[categorical_vars], as.factor)
+dfCardio[numeric_vars] <- lapply(dfCardio[numeric_vars], as.numeric)
+
+# Specify dummy variable coding
+dummies <- dummyVars(cardio ~ ., data = dfCardio)
+ex <- data.frame(predict(dummies, newdata = dfCardio))
+names(ex) <- gsub("\\.", "", names(ex))
+dfCardio <- cbind(dfCardio$cardio, ex)
+names(dfCardio)[1] <- "cardio"
+
+# Check for linear combinations
+cardio <- dfCardio$cardio
+dfCardio <- cbind(rep(1, nrow(dfCardio)), dfCardio[2:ncol(dfCardio)])
+names(dfCardio)[1] <- "ones"
+comboInfo <- findLinearCombos(dfCardio)
+dfCardio <- dfCardio[, -comboInfo$remove]
+dfCardio <- dfCardio[, c(2:ncol(dfCardio))]
+dfCardio <- cbind(cardio, dfCardio)
+
+# Remove features with near-zero variance
+nzv <- nearZeroVar(dfCardio, saveMetrics = TRUE)
+dfCardio <- dfCardio[, c(TRUE, !nzv$zeroVar[2:ncol(dfCardio)])]
+
+# Create UI for the dashboard
+ui <- dashboardPage(
+  title = 'Cardiovascular Disease Prediction Dashboard',
+  dashboardHeader(title = "CVD Prediction Dashboard", titleWidth = 350),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Home", tabName = "home", icon = icon("hospital")),
+      menuItem("Descriptive Analytics", tabName = "Descriptiveanalytics", icon = icon("chart-bar")),
+      menuItem("Logistic Regression Model", tabName = "logistic_model", icon = icon("cogs")),
+      menuItem("Decision Tree", tabName = "decision_tree", icon = icon("tree")),
+      menuItem("Random Forest Model", tabName = "random_forest", icon = icon("cogs")),
+      menuItem("Dimensionality Reduction", tabName = "DimensionalityReduction", icon = icon("compress-arrows-alt")),
+      menuItem("Predict", tabName = "predict", icon = icon("heartbeat")),
+      menuItem("Recommendations", tabName = "recommendations", icon = icon("book")),
+      menuItem("Chatbot", tabName = "chatbot", icon = icon("comments"))
+    )
+  ),
+  dashboardBody(
+    useShinyjs(),
+    tags$style(HTML("
+      body { background-color: #b04a5e; font-family: 'Times New Roman', serif; color: #333333; font-size: 18px; }
+      .navbar { background-color: #ffffff; }
+      .navbar a { color: #333333 !important; }
+      .container { background-color: rgba(255, 255, 255, 0.9); border-radius: 10px; padding: 25px; box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3); color: #343a40; }
+      h1, h3, h4 { color: #000000; text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3); font-size: 22px; }
+      .btn { width: 100%; margin: 10px 0; font-size: 16px; border-radius: 25px; background-color: #841617; color: #ffffff; border: none; padding: 10px; transition: background 0.3s ease; }
+      .btn:hover { background-color: #6f1417; }
+      .bubble-title { text-align: center; background-color: #841617; color: #ffffff; border-radius: 25px; padding: 10px 20px; font-size: 24px; margin-bottom: 20px; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3); }
+      .rect-bubble { background-color: #f9c74f; border-radius: 10px; padding: 15px; margin: 10px 0; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); }
+      .research-overview-bubble { border-radius: 20px; padding: 20px; background-color: rgba(255, 255, 255, 0.95); box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+    ")),
+    tabItems(
+      # Home Tab
+      tabItem(tabName = "home",
+              tags$div(class = "bubble-title", "Heart Sentinel: Machine Learning in Cardiovascular Diseases"),
+              fluidRow(
+                column(width = 12, tags$div(class = "research-overview-bubble", 
+                       tags$h2("Research Overview"),
+                       tags$p("Heart disease continues to be a pervasive issue globally, accounting for a disproportionate amount of mortality rates. The urgency of reliable and timely diagnostic tools is clearer than ever, prompting this research aimed at leveraging machine learning algorithms to predict heart disease."),
+                       tags$p("This project utilizes a modified version of the UCI Heart Disease repository, employing various patient attributes such as age, sex, and medical history to develop predictive models."),
+                       tags$p("By focusing on a systematic methodology encompassing data preprocessing, algorithm selection, and model evaluation, this research aspires to enhance diagnostic precision and improve patient outcomes."),
+                       tags$p("This article documents the intricate steps taken throughout this study, discusses the results obtained using machine learning techniques, and highlights the biases, limitations, and potential directions for further research."),
+                       actionButton("next_to_descriptive", "Next", class = "btn")
+                ))
+              ),
+              fluidRow(
+                valueBox("86 million", "People affected by CVD", icon = icon("user-md"), color = "red"),
+                valueBox("17.9 million", "Annual deaths from CVD", icon = icon("skull-crossbones"), color = "orange"),
+                valueBox("32%", "Percentage of global deaths due to CVD", icon = icon("heart"), color = "purple")
+              ),
+              fluidRow(
+                column(width = 12, imageOutput("image_display"))
+              )
+      ),
+      # Descriptive Analytics Tab
+      tabItem(tabName = "Descriptiveanalytics",
+              fluidRow(
+                box(
+                  title = "Select Variables for Graphs",
+                  status = "primary",
+                  solidHeader = TRUE,
+                  selectInput('hist_x', "Choose a variable for histogram:", names(dfCardio_raw_num), selected = names(dfCardio_raw_num)[[1]]),
+                  sliderInput("binCount", "Bins for histogram", min = 1, max = 30, value = 10),
+                  selectInput('bar_x', label = "Choose a variable for Bar chart:", names(dfCardio_raw_cate), selected = names(dfCardio_raw_cate)[[1]]),
+                  selectInput('bar_fill', label = "Choose a fill variable for Bar chart:", names(dfCardio_raw_cate), selected = names(dfCardio_raw_cate)[[1]]),
+                  selectInput('box_x', label = "X axis of Box Plot:", names(dfCardio_raw_cate), selected = names(dfCardio_raw_cate)[[1]]),
+                  selectInput('box_y', label = "Y axis of Box Plot:", names(dfCardio_raw_num), selected = names(dfCardio_raw_num)[[1]]),
+                  selectInput('scatter_x', label = "X axis of Scatter Plot:", names(dfCardio_raw_num), selected = names(dfCardio_raw_num)[[2]]),
+                  selectInput('scatter_y', label = "Y axis of Scatter Plot:", names(dfCardio_raw_num), selected = names(dfCardio_raw_num)[[1]]),
+                  actionButton(inputId = "click", label = "Generate Graph", class = "btn-primary"),
+                  actionButton("next_to_model", "Next", class = "btn")
+                ),
+                box(title = "Histogram", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("hist", height = "300px")),
+                box(title = "Bar Chart Fill", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("bar_fill", height = "300px")),
+                box(title = "Box Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("box", height = "300px")),
+                box(title = "Scatter Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("scatter", height = "300px")),
+                box(title = "Violin Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("violin", height = "300px")),
+                box(title = "Density Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("density", height = "300px"))
+              )
+      ),
+      # Logistic Regression Model Tab
+      tabItem(tabName = "logistic_model",
+              fluidRow(
+                box(title = "Model Variables Coefficients", status = "primary", solidHeader = TRUE, verbatimTextOutput("linear_co")),
+                box(title = "Model Coefficients P-values", status = "primary", solidHeader = TRUE, verbatimTextOutput("linear_coP")),
+                box(title = "Logistic Regression Summary", status = "primary", solidHeader = TRUE, verbatimTextOutput("sumlm")),
+                box(title = "Model Accuracy", status = "primary", solidHeader = TRUE, verbatimTextOutput("accuracy")),
+                box(title = "Confusion Matrix", status = "primary", solidHeader = TRUE, verbatimTextOutput("confusion")),
+                box(title = "Specificity", status = "success", solidHeader = TRUE, verbatimTextOutput("specificity")),
+                box(title = "Matthews Correlation Coefficient (MCC)", status = "success", solidHeader = TRUE, verbatimTextOutput("mcc")),
+                box(title = "Cohen's Kappa", status = "success", solidHeader = TRUE, verbatimTextOutput("kappa")),
+                box(title = "Correlation Matrix", status = "primary", solidHeader = TRUE, plotOutput("correlation_matrix", height = "400px")),
+                box(title = "ROC Curve", status = "primary", solidHeader = TRUE, plotOutput("roc_plot", height = "300px")),
+                box(title = "AUC Curve", status = "primary", solidHeader = TRUE, plotOutput("auc_plot", height = "300px")),
+                box(title = "Model Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("metrics")),
+                actionButton("next_to_decision_tree", "Next", class = "btn")
+              )
+      ),
+      # Decision Tree Tab
+      tabItem(tabName = "decision_tree",
+              fluidRow(
+                box(title = "Decision Tree Visualization", status = "primary", solidHeader = TRUE, plotOutput("tree_plot", height = "400px")),
+                box(title = "Decision Tree Summary", status = "primary", solidHeader = TRUE, verbatimTextOutput("tree_summary")),
+                box(title = "Decision Tree Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("tree_metrics")),
+                actionButton("next_to_random_forest", "Next", class = "btn")
+              )
+      ),
+      # Random Forest Model Tab
+      tabItem(tabName = "random_forest",
+              fluidRow(
+                box(title = "Random Forest Model Summary", status = "primary", solidHeader = TRUE, verbatimTextOutput("rf_summary")),
+                box(title = "Random Forest Model Accuracy", status = "primary", solidHeader = TRUE, verbatimTextOutput("rf_accuracy")),
+                box(title = "Random Forest Confusion Matrix", status = "primary", solidHeader = TRUE, verbatimTextOutput("rf_confusion")),
+                box(title = "Random Forest Specificity", status = "success", solidHeader = TRUE, verbatimTextOutput("rf_specificity")),
+                box(title = "Random Forest MCC", status = "success", solidHeader = TRUE, verbatimTextOutput("rf_mcc")),
+                box(title = "Random Forest Kappa", status = "success", solidHeader = TRUE, verbatimTextOutput("rf_kappa")),
+                box(title = "Random Forest Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("rf_metrics")),
+                actionButton("next_to_dimension_reduction", "Next", class = "btn")
+              )
+      ),
+      # Dimensionality Reduction Tab
+      tabItem(tabName = "DimensionalityReduction",
+              fluidRow(
+                box(title = "PCA Visualization", status = "primary", solidHeader = TRUE, plotOutput("pca_plot", height = "400px")),
+                box(title = "PCA Summary", status = "primary", solidHeader = TRUE, verbatimTextOutput("pca_summary")),
+                box(title = "PCA Variance Explained", status = "primary", solidHeader = TRUE, plotOutput("pca_variance_plot", height = "300px"))
+              )
+      ),
+      # Predict Tab
+      tabItem(tabName = "predict",
+              fluidRow(
+                box(
+                  title = "Input Data for Prediction",
+                  status = "primary",
+                  solidHeader = TRUE,
+                  div(class = "input-row",
+                      div(class = "input-column", numericInput("age", label = "Age (Years):", 50, min = 1, max = 150)),
+                      div(class = "input-column", selectInput("gender", label = "Gender (0:women, 1:men):", choices = list("0" = 0, "1" = 1), selected = 0)),
+                      div(class = "input-column", numericInput("height", label = "Height (cm):", 160, min = 50, max = 250)),
+                      div(class = "input-column", numericInput("weight", label = "Weight (kg):", 70, min = 3, max = 600)),
+                      div(class = "input-column", numericInput("ap_hi", label = "Systolic Blood Pressure:", 140, min = 60, max = 260)),
+                      div(class = "input-column", numericInput("ap_lo", label = "Diastolic Blood Pressure:", 90, min = 30, max = 210)),
+                      div(class = "input-column", selectInput("cholesterol", label = "Cholesterol (1:normal, 2:above normal, 3:well above normal):", choices = list("1" = 1, "2" = 2, "3" = 3), selected = 1)),
+                      div(class = "input-column", selectInput("gluc", label = "Glucose (1:normal, 2:above normal, 3:well above normal):", choices = list("1" = 1, "2" = 2, "3" = 3), selected = 1)),
+                      div(class = "input-column", selectInput("smoke", label = "Smoke or Not (0: No, 1: Yes):", choices = list("0" = 0, "1" = 1), selected = 0)),
+                      div(class = "input-column", selectInput("alcohol", label = "Alcohol Intake (0: No, 1: Yes):", choices = list("0" = 0, "1" = 1), selected = 0)),
+                      div(class = "input-column", selectInput("active", label = "Physical Activity (0: No, 1: Yes):", choices = list("0" = 0, "1" = 1), selected = 0))
+                  ),
+                  actionButton(inputId = "pred", label = "Predict CVD Risk", class = "btn-danger")
+                ),
+                infoBoxOutput("PredictBox", width = 12)
+              )
+      ),
+      # Recommendations Tab
+      tabItem(tabName = "recommendations",
+              fluidRow(
+                box(
+                  title = "CVD Prediction Results",
+                  status = "primary",
+                  solidHeader = TRUE,
+                  verbatimTextOutput("cvd_advice")
+                )
+              )
+      ),
+      # Chatbot Tab
+      tabItem(tabName = "chatbot",
+              fluidRow(
+                box(
+                  title = "Chatbot",
+                  status = "primary",
+                  solidHeader = TRUE,
+                  textInput("userInput", "Type your message:", ""),
+                  actionButton("generateBtn", "Send", class = "btn-primary"),
+                  dataTableOutput("chatOutput"),
+                  tags$style(HTML("
+                    #chatOutput { height: 400px; }
+                  "))
+                )
+              )
+      )
+    )
+  ),
+  skin = 'black'
+)
+
+server <- function(input, output, session) {
+  # Initialize reactive values for storing chat history
+  chat_history <- reactiveVal(data.frame(Role = character(0), Message = character(0), stringsAsFactors = FALSE))
+  prediction_percentage <- reactiveVal(NA)
+
+  hist_x <- eventReactive(input$click, { input$hist_x })
+  bar_x <- eventReactive(input$click, { input$bar_x })
+  binCount <- eventReactive(input$click, { input$binCount })
+  box_x <- eventReactive(input$click, { input$box_x })
+  box_y <- eventReactive(input$click, { input$box_y })
+  scatter_x <- eventReactive(input$click, { input$scatter_x })
+  scatter_y <- eventReactive(input$click, { input$scatter_y })
+  bar_fill_data <- eventReactive(input$click, { input$bar_fill })
+
+  output$image_display <- renderImage({
+    list(src = "Health1.png")  # Ensure the image path is correct
+  }, deleteFile = FALSE)
+
+  output$hist <- renderPlot({
+    ggplot(dfCardio_raw, aes_string(x = hist_x())) + 
+      geom_histogram(color = "skyblue", fill = "lightblue", binwidth = binCount())
+  })
+
+  output$bar_fill <- renderPlot({
+    ggplot(data = dfCardio_raw, aes_string(x = bar_x(), fill = bar_fill_data())) +
+      geom_bar(position = "fill") + scale_fill_brewer(palette = "Blues")
+  })
+
+  output$box <- renderPlot({
+    ggplot(data = dfCardio_raw, aes_string(x = box_x(), y = box_y())) +
+      geom_boxplot(color = "skyblue", fill = "lightblue")
+  })
+
+  output$scatter <- renderPlot({
+    progress <- Progress$new()
+    on.exit(progress$close())
+    progress$set(message = 'Making plot...', value = 0)
+    n <- 5
+    for (i in 1:n) {
+      progress$inc(1/n, detail = paste("Doing part", i))
+      Sys.sleep(0.1)
+    }
+    ggplot(data = dfCardio_raw, aes_string(x = scatter_x(), y = scatter_y())) +
+      geom_point(color = "skyblue")
+  })
+
+  output$violin <- renderPlot({
+    ggplot(data = dfCardio_raw, aes_string(x = box_x(), y = box_y())) + 
+      geom_violin(fill = "lightblue", color = "skyblue")
+  })
+
+  output$density <- renderPlot({
+    ggplot(dfCardio_raw, aes_string(x = hist_x())) + 
+      geom_density(fill = "lightblue", color = "darkblue", alpha = 0.5)
+  })
+
+  # Logistic Regression Model and Predictions
+  if (nrow(dfCardio) > 1) {
+    preProcValues <- preProcess(dfCardio[, 2:ncol(dfCardio)], method = c("range"))
+    dfCardio_new <- predict(preProcValues, dfCardio)
+    df <- na.omit(dfCardio_new)
+
+    set.seed(123)
+    training.samples <- df$cardio %>% createDataPartition(p = 0.8, list = FALSE)
+    train.data <- df[training.samples, ]
+    test.data <- df[-training.samples, ]
+
+    model <- glm(cardio ~ ., data = train.data, family = binomial)
+    
+    output$sumlm <- renderPrint(summary(model))
+    output$linear_co <- renderPrint(summary(model)$coefficients[, 1])
+    output$linear_coP <- renderPrint(summary(model)$coefficients[, 4])
+
+    probabilities <- model %>% predict(test.data, type = "response")
+    predicted.classes <- ifelse(probabilities > 0.5, "1", "0")
+    
+    output$accuracy <- renderText(paste0("Model Accuracy: ", round(mean(predicted.classes == test.data$cardio) * 100, 2), "%"));
+
+    # Confusion Matrix
+    output$confusion <- renderPrint(table(predicted.classes, test.data$cardio))
+
+    # Calculate additional metrics
+    confusion_matrix <- confusionMatrix(factor(predicted.classes), factor(test.data$cardio))
+    f1_score <- confusion_matrix$byClass["F1"]
+    precision <- confusion_matrix$byClass["Precision"]
+    recall <- confusion_matrix$byClass["Recall"]
+    tn <- confusion_matrix$table[1, 1]  # True Negative
+    fp <- confusion_matrix$table[1, 2]  # False Positive
+    fn <- confusion_matrix$table[2, 1]  # False Negative
+    tp <- confusion_matrix$table[2, 2]  # True Positive
+
+    # Calculate specificity
+    specificity <- tn / (tn + fp)
+    output$specificity <- renderPrint(round(specificity, 2))
+
+    # Calculate MCC
+    mcc <- (tp * tn - fp * fn) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    output$mcc <- renderPrint(round(mcc, 2))
+
+    # Calculate Kappa
+    kappa <- confusion_matrix$overall["Kappa"]
+    output$kappa <- renderPrint(round(kappa, 2))
+
+    output$metrics <- renderPrint({
+      paste0("F1 Score: ", round(f1_score, 2), "\n",
+             "Precision: ", round(precision, 2), "\n",
+             "Recall: ", round(recall, 2))
+    })
+
+    # Correlation Matrix
+    correlation_matrix <- cor(dfCardio[,-1])
+    output$correlation_matrix <- renderPlot({
+      heatmap(correlation_matrix, 
+              main = "Correlation Matrix", 
+              Colv = NA, Rowv = NA, 
+              scale = "column", 
+              col = colorRampPalette(c("blue", "white", "red"))(100))
+    })
+
+    # ROC Curve
+    roc_curve <- roc(test.data$cardio, probabilities)
+    output$roc_plot <- renderPlot({
+      ggroc(roc_curve, alpha = 0.8, color = "blue") + 
+      ggtitle("ROC Curve") + 
+      xlab("False Positive Rate") +
+      ylab("True Positive Rate")
+    })
+
+    # AUC
+    auc_value <- auc(roc_curve)
+    output$auc_plot <- renderPlot({
+      ggroc(roc_curve, alpha = 0.8, color = "blue") + 
+      annotate("text", x = 0.5, y = 0.5, label = paste("AUC =", round(auc_value, 2)), size = 5, color = "red") +
+      ggtitle("ROC Curve with AUC") + 
+      xlab("False Positive Rate") +
+      ylab("True Positive Rate")
+    })
+
+    output$PredictBox <- renderInfoBox({
+      # Preprocess input data
+      gender0 <- ifelse(input$gender == 0, 0, 1)
+      smoke0 <- ifelse(input$smoke == 0, 0, 1)
+      alco0 <- ifelse(input$alcohol == 0, 0, 1)
+      active0 <- ifelse(input$active == 0, 0, 1)
+
+      cholesterol1 <- ifelse(input$cholesterol == 1, 1, 0)
+      cholesterol2 <- ifelse(input$cholesterol == 2, 1, 0)
+
+      gluc1 <- ifelse(input$gluc == 1, 1, 0)
+      gluc2 <- ifelse(input$gluc == 2, 1, 0)
+
+      age <- (input$age - min(dfCardio$age)) / (max(dfCardio$age) - min(dfCardio$age))
+      height <- (input$height - min(dfCardio$height)) / (max(dfCardio$height) - min(dfCardio$height))
+      weight <- (input$weight - min(dfCardio$weight)) / (max(dfCardio$weight) - min(dfCardio$weight))
+      ap_hi <- (input$ap_hi - min(dfCardio$ap_hi)) / (max(dfCardio$ap_hi) - min(dfCardio$ap_hi))
+      ap_lo <- (input$ap_lo - min(dfCardio$ap_lo)) / (max(dfCardio$ap_lo) - min(dfCardio$ap_lo))
+
+      df_for_pred <- data.frame(age, gender0, height, weight, ap_hi, ap_lo, cholesterol1, cholesterol2, gluc1, gluc2, smoke0, alco0, active0)
+      predict_prob <- predict(model, df_for_pred, type = 'response')
+      predict_prob_hund <- round(predict_prob * 100, digits = 2)
+
+      prediction_percentage(predict_prob_hund)  # Update the reactive value with prediction percentage
+
+      if (predict_prob >= 0.5) {
+        advice <- generateContent("What should a person do if they have a high chance of heart disease?", "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ")
+        lifestyle_changes <- generateContent("Suggest lifestyle changes for heart disease prevention.", "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ")
+        healthcare_consultation <- generateContent("What kind of healthcare consultation should a person seek if they are at risk for heart disease?", "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ")
+        
+        output$cvd_advice <- renderText({
+          paste0("Possibility of Cardiovascular Disease: ", predict_prob_hund, "%\n",
+                 "Advice: ", advice, "\n\n",
+                 "Lifestyle Changes: ", lifestyle_changes, "\n\n",
+                 "Healthcare Consultation: ", healthcare_consultation)
+        })
+
+        infoBox("Risk Alert", paste0("Possibility of Cardiovascular Disease: ", predict_prob_hund, "%"), 
+                icon = icon("alert", lib = "glyphicon"), 
+                color = "red", fill = TRUE)
+      } else {
+        output$cvd_advice <- renderText({
+          paste0("Possibility of Cardiovascular Disease: ", predict_prob_hund, "%\n", 
+                 "You are classified as low risk for cardiovascular disease.")
+        })
+
+        infoBox("Low Risk", paste0("Possibility of Cardiovascular Disease: ", predict_prob_hund, "%"), 
+                icon = icon("check", lib = "glyphicon"), 
+                color = "green", fill = TRUE)
+      }
+    })
+  } else {
+    output$PredictBox <- renderInfoBox({
+      infoBox("Data Error", "Not enough data to make predictions.", icon = icon("exclamation-triangle"), color = "yellow", fill = TRUE)
+    })
+  }
+
+  # PCA Implementation
+  output$pca_plot <- renderPlot({
+    pca <- prcomp(dfCardio[, -1], center = TRUE, scale. = TRUE)
+    ggplot(as.data.frame(pca$x), aes(x = PC1, y = PC2, color = factor(dfCardio$cardio))) +
+      geom_point(size = 2, alpha = 0.7) +
+      theme_minimal() +
+      ggtitle("PCA: PC1 vs PC2") +
+      xlab("Principal Component 1") +
+      ylab("Principal Component 2") +
+      labs(color = "Cardio")
+  })
+
+  output$pca_summary <- renderPrint({
+    pca <- prcomp(dfCardio[, -1], center = TRUE, scale. = TRUE)
+    summary(pca)
+  })
+
+  output$pca_variance_plot <- renderPlot({
+    pca <- prcomp(dfCardio[, -1], center = TRUE, scale. = TRUE)
+    variance_explained <- pca$sdev^2 / sum(pca$sdev^2)
+    qplot(1:length(variance_explained), variance_explained, geom="line", 
+          xlab="Principal Component", ylab="Variance Explained", main="Variance Explained by Principal Components") +
+      theme_minimal() +
+      geom_point()
+  })
+
+  # Decision Tree Model
+  decision_tree_model <- reactive({
+    set.seed(123)
+    training.samples <- df$cardio %>% createDataPartition(p = 0.8, list = FALSE)
+    train.tree <- df[training.samples, ]
+    test.tree <- df[-training.samples,]
+    
+    tree_model <- rpart(cardio ~ ., data = train.tree, method = "class")
+    return(list(model = tree_model, test = test.tree))
+  })
+
+  output$tree_plot <- renderPlot({
+    tree_model_info <- decision_tree_model()
+    rpart.plot(tree_model_info$model, main = "Decision Tree for Cardiovascular Disease Prediction")
+  })
+
+  output$tree_summary <- renderPrint({
+    tree_model_info <- decision_tree_model()
+    summary(tree_model_info$model)
+  })
+
+  output$tree_metrics <- renderPrint({
+    tree_model_info <- decision_tree_model()
+    predictions <- predict(tree_model_info$model, tree_model_info$test, type = "class")
+    confusion_mtx <- confusionMatrix(factor(predictions), factor(tree_model_info$test$cardio))
+    
+    accuracy_value <- confusion_mtx$overall["Accuracy"]
+    kappa_value <- confusion_mtx$overall["Kappa"]
+    f1_value <- confusion_mtx$byClass["F1"]
+    
+    paste0("Accuracy: ", round(accuracy_value * 100, 2), "%\n",
+           "Kappa: ", round(kappa_value, 2), "\n",
+           "F1 Score: ", round(f1_value, 2))
+  })
+
+  
+  # Random Forest Model
+  random_forest_model <- reactive({
+    set.seed(123)
+    training.samples <- df$cardio %>% createDataPartition(p = 0.8, list = FALSE)
+    train.rf <- df[training.samples, ]
+    test.rf <- df[-training.samples, ]
+    
+    rf_model <- randomForest(cardio ~ ., data = train.rf)
+    return(list(model = rf_model, test = test.rf))
+  })
+
+  output$rf_summary <- renderPrint({
+    rf_model_info <- random_forest_model()
+    print(rf_model_info$model)
+  })
+
+  output$rf_accuracy <- renderPrint({
+    rf_model_info <- random_forest_model()
+    predictions <- predict(rf_model_info$model, rf_model_info$test)
+    accuracy <- mean(predictions == rf_model_info$test$cardio)
+    paste0("Accuracy: ", round(accuracy * 100, 2), "%")
+  })
+
+  output$rf_confusion <- renderPrint({
+    rf_model_info <- random_forest_model()
+    confusion_mtx <- table(predict(rf_model_info$model, rf_model_info$test), rf_model_info$test$cardio)
+    print(confusion_mtx)
+  })
+
+  output$rf_specificity <- renderPrint({
+    rf_model_info <- random_forest_model()
+    predictions <- predict(rf_model_info$model, rf_model_info$test)
+    confusion_mtx <- confusionMatrix(factor(predictions), factor(rf_model_info$test$cardio))
+    tn <- confusion_mtx$table[1, 1]  # True Negative
+    fp <- confusion_mtx$table[1, 2]  # False Positive
+    specificity <- tn / (tn + fp)
+    round(specificity, 2)
+  })
+
+  output$rf_mcc <- renderPrint({
+    rf_model_info <- random_forest_model()
+    predictions <- predict(rf_model_info$model, rf_model_info$test)
+    confusion_matrix <- confusionMatrix(factor(predictions), factor(rf_model_info$test$cardio))
+    tn <- confusion_matrix$table[1, 1]  # True Negative
+    fp <- confusion_matrix$table[1, 2]  # False Positive
+    fn <- confusion_matrix$table[2, 1]  # False Negative
+    tp <- confusion_matrix$table[2, 2]  # True Positive
+    mcc <- (tp * tn - fp * fn) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    round(mcc, 2)
+  })
+
+  output$rf_kappa <- renderPrint({
+    rf_model_info <- random_forest_model()
+    confusion_matrix <- confusionMatrix(factor(predict(rf_model_info$model, rf_model_info$test)), factor(rf_model_info$test$cardio))
+    round(confusion_matrix$overall["Kappa"], 2)
+  })
+
+  output$rf_metrics <- renderPrint({
+    rf_model_info <- random_forest_model()
+    predictions <- predict(rf_model_info$model, rf_model_info$test)
+    confusion_matrix <- confusionMatrix(factor(predictions), factor(rf_model_info$test$cardio))
+    f1_score <- confusion_matrix$byClass["F1"]
+    precision <- confusion_matrix$byClass["Precision"]
+    recall <- confusion_matrix$byClass["Recall"]
+    
+    paste0("F1 Score: ", round(f1_score, 2), "\n",
+           "Precision: ", round(precision, 2), "\n",
+           "Recall: ", round(recall, 2))
+  })
+
+  observeEvent(input$next_to_descriptive, {
+    updateTabItems(session, "sidebar", "Descriptiveanalytics")
+  })
+
+  observeEvent(input$next_to_model, {
+    updateTabItems(session, "sidebar", "logistic_model")
+  })
+
+  observeEvent(input$next_to_decision_tree, {
+    updateTabItems(session, "sidebar", "decision_tree")
+  })
+  
+  observeEvent(input$next_to_random_forest, {
+    updateTabItems(session, "sidebar", "random_forest")
+  })
+
+  observeEvent(input$next_to_dimension_reduction, {
+    updateTabItems(session, "sidebar", "DimensionalityReduction")
+  })
+
+  observeEvent(input$next_to_predict, {
+    updateTabItems(session, "sidebar", "predict")
+  })
+
+  # Chatbot Logic
+  observeEvent(input$generateBtn, {
+    headers <- c(`Content-Type` = "application/json")
+    api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ"  # Replace with your actual API key
+
+    user_text <- input$userInput
+    
+    if (user_text != "") {
+      # Check if the user is asking for advice or prediction
+      if (grepl("advice|recommendation|suggest|what to do", user_text, ignore.case = TRUE) || 
+          grepl("prediction", user_text, ignore.case = TRUE)) {
+        response <- generateContent(paste("The prediction percentage is", prediction_percentage(), 
+                                           "and the user asked:", user_text), api_key)
+      } else {
+        response <- generateContent(user_text, api_key)
+      }
+
+      response <- ifelse(is.null(response), "An error occurred, please refresh the page.", response)
+      chat_history(rbind(chat_history(), data.frame(Role = "User", Message = user_text), stringsAsFactors = FALSE))
+      chat_history(rbind(chat_history(), data.frame(Role = "Model", Message = response), stringsAsFactors = FALSE))
+      
+      output$chatOutput <- renderDataTable({
+        DT::datatable(
+          chat_history(),
+          options = list(
+            paging = FALSE,
+            searching = FALSE
+          ),
+          rownames = FALSE,
+          class = 'cell-border stripe',
+          escape = FALSE
+        )
+      })
+
+      updateTextInput(session, "userInput", value = "")
+    }
+  })
+}
+
+shinyApp(ui = ui, server = server)
