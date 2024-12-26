@@ -1,3 +1,4 @@
+# Load Required Libraries
 library(httr)
 library(shiny)
 library(shinydashboard)
@@ -8,7 +9,11 @@ library(pROC)
 library(shinyjs)
 library(rpart)
 library(rpart.plot)
-library(randomForest)  # New library for Random Forest
+library(randomForest)  # For Random Forest
+library(class)         # For KNN
+library(e1071)        # For Naive Bayes
+library(factoextra)   # For clustering visualization
+library(cluster)      # For clustering algorithms
 
 generateContent <- function(prompt, api_key) {
   headers <- c(`Content-Type` = "application/json")
@@ -72,6 +77,11 @@ ui <- dashboardPage(
       menuItem("Logistic Regression Model", tabName = "logistic_model", icon = icon("cogs")),
       menuItem("Decision Tree", tabName = "decision_tree", icon = icon("tree")),
       menuItem("Random Forest Model", tabName = "random_forest", icon = icon("cogs")),
+      menuItem("KNN Model", tabName = "knn_model", icon = icon("cogs")),  # KNN Tab
+      menuItem("Naive Bayes Model", tabName = "naive_bayes_model", icon = icon("cogs")),  # Naive Bayes Tab
+      menuItem("Model Comparison", tabName = "model_comparison", icon = icon("chart-bar")),
+      menuItem("K-Means Clustering", tabName = "kmeans_clustering", icon = icon("cluster")),  # K-Means Tab
+      menuItem("Hierarchical Clustering", tabName = "hierarchical_clustering", icon = icon("project-diagram")),  # Hierarchical Tab
       menuItem("Dimensionality Reduction", tabName = "DimensionalityReduction", icon = icon("compress-arrows-alt")),
       menuItem("Predict", tabName = "predict", icon = icon("heartbeat")),
       menuItem("Recommendations", tabName = "recommendations", icon = icon("book")),
@@ -178,7 +188,51 @@ ui <- dashboardPage(
                 box(title = "Random Forest MCC", status = "success", solidHeader = TRUE, verbatimTextOutput("rf_mcc")),
                 box(title = "Random Forest Kappa", status = "success", solidHeader = TRUE, verbatimTextOutput("rf_kappa")),
                 box(title = "Random Forest Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("rf_metrics")),
-                actionButton("next_to_dimension_reduction", "Next", class = "btn")
+                actionButton("next_to_knn", "Next", class = "btn")
+              )
+      ),
+      # KNN Model Tab
+      tabItem(tabName = "knn_model",
+              fluidRow(
+                box(title = "KNN Model Accuracy", status = "primary", solidHeader = TRUE, verbatimTextOutput("knn_accuracy")),
+                box(title = "KNN Confusion Matrix", status = "primary", solidHeader = TRUE, verbatimTextOutput("knn_confusion")),
+                box(title = "KNN Specificity", status = "success", solidHeader = TRUE, verbatimTextOutput("knn_specificity")),
+                box(title = "KNN MCC", status = "success", solidHeader = TRUE, verbatimTextOutput("knn_mcc")),
+                box(title = "KNN Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("knn_metrics")),
+                actionButton("next_to_naive_bayes", "Next", class = "btn")
+              )
+      ),
+      # Naive Bayes Model Tab
+      tabItem(tabName = "naive_bayes_model",
+              fluidRow(
+                box(title = "Naive Bayes Model Accuracy", status = "primary", solidHeader = TRUE, verbatimTextOutput("nb_accuracy")),
+                box(title = "Naive Bayes Confusion Matrix", status = "primary", solidHeader = TRUE, verbatimTextOutput("nb_confusion")),
+                box(title = "Naive Bayes Specificity", status = "success", solidHeader = TRUE, verbatimTextOutput("nb_specificity")),
+                box(title = "Naive Bayes MCC", status = "success", solidHeader = TRUE, verbatimTextOutput("nb_mcc")),
+                box(title = "Naive Bayes Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("nb_metrics")),
+                actionButton("next_to_model_comparison", "Next", class = "btn")
+              )
+      ),
+      # Model Comparison Tab
+      tabItem(tabName = "model_comparison",
+              fluidRow(
+                box(title = "Model Comparison Metrics", status = "primary", solidHeader = TRUE, plotOutput("comparison_plot", height = "400px")),
+                box(title = "Model Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("model_metrics"))
+              )
+      ),
+      # K-Means Clustering Tab
+      tabItem(tabName = "kmeans_clustering",
+              fluidRow(
+                box(title = "K-Means Clustering Visualization", status = "primary", solidHeader = TRUE, plotOutput("kmeans_plot", height = "400px")),
+                box(title = "K-Means Summary", status = "primary", solidHeader = TRUE, verbatimTextOutput("kmeans_summary")),
+                box(title = "Elbow Method Plot", status = "primary", solidHeader = TRUE, plotOutput("elbow_plot", height = "300px"))
+              )
+      ),
+      # Hierarchical Clustering Tab
+      tabItem(tabName = "hierarchical_clustering",
+              fluidRow(
+                box(title = "Hierarchical Clustering Dendrogram", status = "primary", solidHeader = TRUE, plotOutput("hclust_plot", height = "400px")),
+                box(title = "Hierarchical Clustering Summary", status = "primary", solidHeader = TRUE, verbatimTextOutput("hclust_summary"))
               )
       ),
       # Dimensionality Reduction Tab
@@ -314,14 +368,14 @@ server <- function(input, output, session) {
     test.data <- df[-training.samples, ]
 
     model <- glm(cardio ~ ., data = train.data, family = binomial)
-    
+
     output$sumlm <- renderPrint(summary(model))
     output$linear_co <- renderPrint(summary(model)$coefficients[, 1])
     output$linear_coP <- renderPrint(summary(model)$coefficients[, 4])
 
     probabilities <- model %>% predict(test.data, type = "response")
     predicted.classes <- ifelse(probabilities > 0.5, "1", "0")
-    
+
     output$accuracy <- renderText(paste0("Model Accuracy: ", round(mean(predicted.classes == test.data$cardio) * 100, 2), "%"));
 
     # Confusion Matrix
@@ -502,7 +556,6 @@ server <- function(input, output, session) {
            "F1 Score: ", round(f1_value, 2))
   })
 
-  
   # Random Forest Model
   random_forest_model <- reactive({
     set.seed(123)
@@ -518,6 +571,7 @@ server <- function(input, output, session) {
     rf_model_info <- random_forest_model()
     print(rf_model_info$model)
   })
+
 
   output$rf_accuracy <- renderPrint({
     rf_model_info <- random_forest_model()
@@ -554,12 +608,6 @@ server <- function(input, output, session) {
     round(mcc, 2)
   })
 
-  output$rf_kappa <- renderPrint({
-    rf_model_info <- random_forest_model()
-    confusion_matrix <- confusionMatrix(factor(predict(rf_model_info$model, rf_model_info$test)), factor(rf_model_info$test$cardio))
-    round(confusion_matrix$overall["Kappa"], 2)
-  })
-
   output$rf_metrics <- renderPrint({
     rf_model_info <- random_forest_model()
     predictions <- predict(rf_model_info$model, rf_model_info$test)
@@ -571,6 +619,165 @@ server <- function(input, output, session) {
     paste0("F1 Score: ", round(f1_score, 2), "\n",
            "Precision: ", round(precision, 2), "\n",
            "Recall: ", round(recall, 2))
+  })
+
+  # KNN Model
+  knn_model <- reactive({
+    set.seed(123)
+    training.samples <- df$cardio %>% createDataPartition(p = 0.8, list = FALSE)
+    train.knn <- df[training.samples, ]
+    test.knn <- df[-training.samples, ]
+    
+    knn_pred <- knn(train = train.knn[,-1], test = test.knn[,-1], cl = train.knn$cardio, k = 5)
+    return(list(predictions = knn_pred, test = test.knn))
+  })
+
+  output$knn_accuracy <- renderPrint({
+    knn_model_info <- knn_model()
+    accuracy <- mean(knn_model_info$predictions == knn_model_info$test$cardio)
+    paste0("Accuracy: ", round(accuracy * 100, 2), "%")
+  })
+
+  output$knn_confusion <- renderPrint({
+    knn_model_info <- knn_model()
+    confusion_mtx <- table(knn_model_info$predictions, knn_model_info$test$cardio)
+    print(confusion_mtx)
+  })
+
+  output$knn_specificity <- renderPrint({
+    knn_model_info <- knn_model()
+    confusion_mtx <- confusionMatrix(factor(knn_model_info$predictions), factor(knn_model_info$test$cardio))
+    tn <- confusion_mtx$table[1, 1]
+    fp <- confusion_mtx$table[1, 2]
+    specificity <- tn / (tn + fp)
+    round(specificity, 2)
+  })
+
+  output$knn_mcc <- renderPrint({
+    knn_model_info <- knn_model()
+    confusion_matrix <- confusionMatrix(factor(knn_model_info$predictions), factor(knn_model_info$test$cardio))
+    tn <- confusion_matrix$table[1, 1]
+    fp <- confusion_matrix$table[1, 2]
+    fn <- confusion_matrix$table[2, 1]
+    tp <- confusion_matrix$table[2, 2]
+    mcc <- (tp * tn - fp * fn) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    round(mcc, 2)
+  })
+
+  output$knn_metrics <- renderPrint({
+    knn_model_info <- knn_model()
+    confusion_matrix <- confusionMatrix(factor(knn_model_info$predictions), factor(knn_model_info$test$cardio))
+    f1_score <- confusion_matrix$byClass["F1"]
+    precision <- confusion_matrix$byClass["Precision"]
+    recall <- confusion_matrix$byClass["Recall"]
+    
+    paste0("F1 Score: ", round(f1_score, 2), "\n",
+           "Precision: ", round(precision, 2), "\n",
+           "Recall: ", round(recall, 2))
+  })
+
+  # Naive Bayes Model
+  naive_bayes_model <- reactive({
+    set.seed(123)
+    training.samples <- df$cardio %>% createDataPartition(p = 0.8, list = FALSE)
+    train.nb <- df[training.samples, ]
+    test.nb <- df[-training.samples, ]
+    
+    nb_model <- naiveBayes(cardio ~ ., data = train.nb)
+    nb_pred <- predict(nb_model, test.nb)
+    return(list(predictions = nb_pred, test = test.nb))
+  })
+
+  output$nb_accuracy <- renderPrint({
+    nb_model_info <- naive_bayes_model()
+    accuracy <- mean(nb_model_info$predictions == nb_model_info$test$cardio)
+    paste0("Accuracy: ", round(accuracy * 100, 2), "%")
+  })
+
+  output$nb_confusion <- renderPrint({
+    nb_model_info <- naive_bayes_model()
+    confusion_mtx <- table(nb_model_info$predictions, nb_model_info$test$cardio)
+    print(confusion_mtx)
+  })
+
+  output$nb_specificity <- renderPrint({
+    nb_model_info <- naive_bayes_model()
+    confusion_mtx <- confusionMatrix(factor(nb_model_info$predictions), factor(nb_model_info$test$cardio))
+    tn <- confusion_mtx$table[1, 1]
+    fp <- confusion_mtx$table[1, 2]
+    specificity <- tn / (tn + fp)
+    round(specificity, 2)
+  })
+
+  output$nb_mcc <- renderPrint({
+    nb_model_info <- naive_bayes_model()
+    confusion_matrix <- confusionMatrix(factor(nb_model_info$predictions), factor(nb_model_info$test$cardio))
+    tn <- confusion_matrix$table[1, 1]
+    fp <- confusion_matrix$table[1, 2]
+    fn <- confusion_matrix$table[2, 1]
+    tp <- confusion_matrix$table[2, 2]
+    mcc <- (tp * tn - fp * fn) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    round(mcc, 2)
+  })
+
+  output$nb_metrics <- renderPrint({
+    nb_model_info <- naive_bayes_model()
+    confusion_matrix <- confusionMatrix(factor(nb_model_info$predictions), factor(nb_model_info$test$cardio))
+    f1_score <- confusion_matrix$byClass["F1"]
+    precision <- confusion_matrix$byClass["Precision"]
+    recall <- confusion_matrix$byClass["Recall"]
+    
+    paste0("F1 Score: ", round(f1_score, 2), "\n",
+           "Precision: ", round(precision, 2), "\n",
+           "Recall: ", round(recall, 2))
+  })
+
+  # Model Comparison
+  output$comparison_plot <- renderPlot({
+    # Gather metrics for all models
+    metrics <- data.frame(
+      Model = c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes"),
+      Accuracy = c(mean(predicted.classes == test.data$cardio), 
+                   confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$overall["Accuracy"],
+                   mean(predict(random_forest_model()$model, random_forest_model()$test) == random_forest_model()$test$cardio),
+                   mean(knn_model()$predictions == knn_model()$test$cardio),
+                   mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio)),
+      F1_Score = c(f1_score,
+                   confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["F1"],
+                   mean(knn_model()$predictions == knn_model()$test$cardio),
+                   mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio)
+      )
+    )
+
+    # Reshape data for plotting (long format)
+    metrics_long <- tidyr::pivot_longer(metrics, cols = -Model, names_to = "Metric", values_to = "Value")
+    
+    ggplot(metrics_long, aes(x = Model, y = Value, fill = Metric)) +
+      geom_bar(stat = "identity", position = "dodge") +
+      theme_minimal() +
+      labs(title = "Model Comparison Metrics", y = "Metric Value") +
+      scale_fill_brewer(palette = "Set1")
+  })
+
+  output$model_metrics <- renderPrint({
+    metrics <- data.frame(
+      Model = c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes"),
+      Accuracy = c(mean(predicted.classes == test.data$cardio), 
+                   confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$overall["Accuracy"],
+                   mean(predict(random_forest_model()$model, random_forest_model()$test) == random_forest_model()$test$cardio),
+                   mean(knn_model()$predictions == knn_model()$test$cardio),
+                   mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio)
+      ),
+      F1_Score = c(f1_score,
+                   confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["F1"],
+                   mean(knn_model()$predictions == knn_model()$test$cardio),
+                   mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio)
+      )
+    )
+
+    print(metrics)
   })
 
   observeEvent(input$next_to_descriptive, {
@@ -589,12 +796,66 @@ server <- function(input, output, session) {
     updateTabItems(session, "sidebar", "random_forest")
   })
 
-  observeEvent(input$next_to_dimension_reduction, {
-    updateTabItems(session, "sidebar", "DimensionalityReduction")
+  observeEvent(input$next_to_knn, {
+    updateTabItems(session, "sidebar", "knn_model")
   })
 
-  observeEvent(input$next_to_predict, {
-    updateTabItems(session, "sidebar", "predict")
+  observeEvent(input$next_to_naive_bayes, {
+    updateTabItems(session, "sidebar", "naive_bayes_model")
+  })
+
+  observeEvent(input$next_to_model_comparison, {
+    updateTabItems(session, "sidebar", "model_comparison")
+  })
+
+  observeEvent(input$next_to_kmeans, {
+    updateTabItems(session, "sidebar", "kmeans_clustering")
+  })
+
+  observeEvent(input$next_to_hierarchical, {
+    updateTabItems(session, "sidebar", "hierarchical_clustering")
+  })
+
+  # K-Means Clustering
+  output$kmeans_plot <- renderPlot({
+    set.seed(123)
+    kmeans_result <- kmeans(dfCardio[, -1], centers = 3)
+    dfCardio$cluster <- as.factor(kmeans_result$cluster)
+    
+    ggplot(dfCardio, aes(x = age, y = height, color = cluster)) +
+      geom_point(size = 2, alpha = 0.7) +
+      theme_minimal() +
+      ggtitle("K-Means Clustering Result") +
+      labs(color = "Cluster")
+  })
+
+  output$kmeans_summary <- renderPrint({
+    set.seed(123)
+    kmeans_result <- kmeans(dfCardio[, -1], centers = 3)
+    print(kmeans_result)
+  })
+
+  output$elbow_plot <- renderPlot({
+    wss <- numeric(10)
+    for (i in 1:10) {
+      kmeans_result <- kmeans(dfCardio[, -1], centers = i)
+      wss[i] <- kmeans_result$tot.withinss
+    }
+    plot(1:10, wss, type = "b", pch = 19, xlab = "Number of Clusters", ylab = "Total Within-Cluster Sum of Squares",
+         main = "Elbow Method")
+  })
+
+  # Hierarchical Clustering
+  output$hclust_plot <- renderPlot({
+    dist_mat <- dist(dfCardio[, -1])  # Compute distance matrix
+    hclust_result <- hclust(dist_mat)  # Hierarchical clustering
+    plot(hclust_result, labels = dfCardio$cardio, main = "Hierarchical Clustering Dendrogram", xlab = "Cardio")
+  })
+
+  output$hclust_summary <- renderPrint({
+    dist_mat <- dist(dfCardio[, -1])  # Compute distance matrix
+    hclust_result <- hclust(dist_mat)  # Hierarchical clustering
+    print(hclust_result)
   })
 
   # Chatbot Logic
