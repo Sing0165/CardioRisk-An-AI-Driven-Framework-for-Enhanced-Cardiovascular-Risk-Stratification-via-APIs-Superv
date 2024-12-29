@@ -619,7 +619,7 @@ server <- function(input, output, session) {
       paste0("F1 Score: ", round(f1_score, 2), "\n",
              "Precision: ", round(precision, 2), "\n",
              "Recall: ", round(recall, 2))
-    })
+    });
 
     # Correlation Matrix
     correlation_matrix <- cor(dfCardio[,-1])
@@ -906,7 +906,7 @@ server <- function(input, output, session) {
   })
 
   # Random Forest Feature Importance
-   output$feature_importance_plot_rf <- renderPlot({
+  output$feature_importance_plot_rf <- renderPlot({
     rf_model_info <- random_forest_model()
     rf_importance <- importance(rf_model_info$model)
     rf_importance_df <- data.frame(Feature = rownames(rf_importance), Importance = rf_importance[, 1]) %>%
@@ -962,10 +962,10 @@ server <- function(input, output, session) {
     output$confusion_knn <- renderPrint(confusion_matrix_knn$table)
 
     output$metrics_knn <- renderPrint({
-      paste0("True Positive (TP): ", confusion_matrix_knn$table[2,2], "\n",
-             "True Negative (TN): ", confusion_matrix_knn$table[1,1], "\n",
-             "False Positive (FP): ", confusion_matrix_knn$table[1,2], "\n",
-             "False Negative (FN): ", confusion_matrix_knn$table[2,1])
+      paste0("True Positive (TP): ", confusion_matrix_knn$table[2, 2], "\n",
+             "True Negative (TN): ", confusion_matrix_knn$table[1, 1], "\n",
+             "False Positive (FP): ", confusion_matrix_knn$table[1, 2], "\n",
+             "False Negative (FN): ", confusion_matrix_knn$table[2, 1])
     })
   })
 
@@ -1029,10 +1029,10 @@ server <- function(input, output, session) {
     output$confusion_nb <- renderPrint(confusion_matrix_nb$table)
 
     output$metrics_nb <- renderPrint({
-      paste0("True Positive (TP): ", confusion_matrix_nb$table[2,2], "\n",
-             "True Negative (TN): ", confusion_matrix_nb$table[1,1], "\n",
-             "False Positive (FP): ", confusion_matrix_nb$table[1,2], "\n",
-             "False Negative (FN): ", confusion_matrix_nb$table[2,1])
+      paste0("True Positive (TP): ", confusion_matrix_nb$table[2, 2], "\n",
+             "True Negative (TN): ", confusion_matrix_nb$table[1, 1], "\n",
+             "False Positive (FP): ", confusion_matrix_nb$table[1, 2], "\n",
+             "False Negative (FN): ", confusion_matrix_nb$table[2, 1])
     })
   })
 
@@ -1062,7 +1062,7 @@ server <- function(input, output, session) {
     f1_score <- confusion_matrix$byClass["F1"]
     precision <- confusion_matrix$byClass["Precision"]
     recall <- confusion_matrix$byClass["Recall"]
-    
+
     paste0("F1 Score: ", round(f1_score, 2), "\n",
            "Precision: ", round(precision, 2), "\n",
            "Recall: ", round(recall, 2))
@@ -1103,10 +1103,10 @@ server <- function(input, output, session) {
     output$confusion_nn <- renderPrint(confusion_matrix_nn$table)
 
     output$metrics_nn <- renderPrint({
-      paste0("True Positive (TP): ", confusion_matrix_nn$table[2,2], "\n",
-             "True Negative (TN): ", confusion_matrix_nn$table[1,1], "\n",
-             "False Positive (FP): ", confusion_matrix_nn$table[1,2], "\n",
-             "False Negative (FN): ", confusion_matrix_nn$table[2,1])
+      paste0("True Positive (TP): ", confusion_matrix_nn$table[2, 2], "\n",
+             "True Negative (TN): ", confusion_matrix_nn$table[1, 1], "\n",
+             "False Positive (FP): ", confusion_matrix_nn$table[1, 2], "\n",
+             "False Negative (FN): ", confusion_matrix_nn$table[2, 1])
     })
   })
 
@@ -1401,6 +1401,43 @@ server <- function(input, output, session) {
   # Render the Random Forest Confusion Matrix
   output$rf_plot <- renderPlot({
     create_cm_plot(rf_cm, "Random Forest")
+  })
+
+  # Statistical Tests Logic
+  observeEvent(input$run_chisq_test, {
+    # Example: Chi-Squared Test
+    chisq_result <- chisq.test(table(dfCardio$gender, dfCardio$cardio))
+    output$chisq_result <- renderPrint(chisq_result)
+  })
+
+  observeEvent(input$run_t_test, {
+    # Example: T-Test
+    t_test_result <- t.test(dfCardio$age ~ dfCardio$cardio)
+    output$t_test_result <- renderPrint(t_test_result)
+  })
+
+  observeEvent(input$run_anova_test, {
+    # Example: ANOVA
+    anova_result <- aov(age ~ cardio, data = dfCardio)
+    output$anova_result <- renderPrint(summary(anova_result))
+  })
+
+  observeEvent(input$run_mann_whitney, {
+    # Example: Mann-Whitney U Test
+    mann_whitney_result <- wilcox.test(age ~ cardio, data = dfCardio)
+    output$mann_whitney_result <- renderPrint(mann_whitney_result)
+  })
+
+  observeEvent(input$run_kruskal_test, {
+    # Example: Kruskal-Wallis Test
+    kruskal_result <- kruskal.test(age ~ cardio, data = dfCardio)
+    output$kruskal_result <- renderPrint(kruskal_result)
+  })
+
+  observeEvent(input$run_ks_test, {
+    # Example: Kolmogorov-Smirnov Test
+    ks_test_result <- ks.test(dfCardio$ap_hi[dfCardio$cardio == 0], dfCardio$ap_hi[dfCardio$cardio == 1])
+    output$ks_result <- renderPrint(ks_test_result)
   })
 }
 
