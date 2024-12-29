@@ -14,6 +14,7 @@ library(e1071)        # For Naive Bayes
 library(cluster)      # For clustering algorithms
 library(DT)           # For DataTables
 library(nnet)         # For Neural Network
+library(reshape2)     # For reshaping data
 
 generateContent <- function(prompt, api_key) {
   headers <- c(`Content-Type` = "application/json")
@@ -66,6 +67,48 @@ dfCardio <- cbind(cardio, dfCardio)
 nzv <- nearZeroVar(dfCardio, saveMetrics = TRUE)
 dfCardio <- dfCardio[, c(TRUE, !nzv$zeroVar[2:ncol(dfCardio)])]
 
+# Define the confusion matrices for the selected models
+nb_cm <- matrix(c(5422, 1526, 2087, 4721), nrow = 2, byrow = TRUE)
+colnames(nb_cm) <- c("Prediction 0", "Prediction 1")
+rownames(nb_cm) <- c("Reference 0", "Reference 1")
+
+lg_cm <- matrix(c(5468, 1480, 2199, 4609), nrow = 2, byrow = TRUE)
+colnames(lg_cm) <- c("Prediction 0", "Prediction 1")
+rownames(lg_cm) <- c("Reference 0", "Reference 1")
+
+nn_cm <- matrix(c(5422, 1526, 2087, 4721), nrow = 2, byrow = TRUE)
+colnames(nn_cm) <- c("Prediction 0", "Prediction 1")
+rownames(nn_cm) <- c("Reference 0", "Reference 1")
+
+rf_cm <- matrix(c(5429, 1519, 2124, 4684), nrow = 2, byrow = TRUE)
+colnames(rf_cm) <- c("Prediction 0", "Prediction 1")
+rownames(rf_cm) <- c("Reference 0", "Reference 1")
+
+# Function to generate confusion matrix plot with a specific color palette
+create_cm_plot <- function(cm_data, model_name) {
+  cm_df <- melt(cm_data)
+  color_scheme <- switch(model_name,
+                         "Naive Bayes" = scale_fill_gradient(low = "lightyellow", high = "darkorange"),
+                         "Logistic Regression" = scale_fill_gradient(low = "white", high = "blue"),
+                         "Neural Network" = scale_fill_gradient(low = "lightgreen", high = "darkgreen"),
+                         "Random Forest" = scale_fill_gradient(low = "lightpink", high = "red"))
+  
+  ggplot(cm_df, aes(x = Var2, y = Var1, fill = value)) +
+    geom_tile(color = "white") +
+    color_scheme +
+    geom_text(aes(label = value), color = "black", size = 6) +
+    theme_minimal() +
+    theme(
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.text.x = element_text(size = 14),
+      axis.text.y = element_text(size = 14),
+      plot.title = element_text(size = 16, hjust = 0.5)
+    ) +
+    labs(title = paste(model_name, "Confusion Matrix")) +
+    coord_fixed(ratio = 1)
+}
+
 # Create UI for the dashboard
 ui <- dashboardPage(
   title = 'Cardiovascular Disease Prediction Dashboard',
@@ -91,7 +134,8 @@ ui <- dashboardPage(
       menuItem("Recommendations", tabName = "recommendations", icon = icon("book")),
       menuItem("Chatbot", tabName = "chatbot", icon = icon("comments")),
       menuItem("Model Accuracies Comparison", tabName = "model_accuracies_comparison", icon = icon("chart-line")),
-      menuItem("Confusion Matrices", tabName = "confusion_matrices", icon = icon("table"))  # New tab for confusion matrices
+      menuItem("Confusion Matrices", tabName = "confusion_matrices", icon = icon("table")),
+      menuItem("Advanced Confusion Matrices", tabName = "advanced_confusion_matrices", icon = icon("table"))  # New tab for advanced confusion matrices
     )
   ),
   dashboardBody(
@@ -398,6 +442,60 @@ ui <- dashboardPage(
                     verbatimTextOutput("metrics_nn")
                 )
               )
+      ),
+      # Advanced Confusion Matrices Tab
+      tabItem(tabName = "advanced_confusion_matrices",
+              fluidPage(
+                titlePanel("Confusion Matrix Visualizations"),
+                sidebarLayout(
+                  sidebarPanel(
+                    # No input needed, just tabs to switch between models
+                  ),
+                  mainPanel(
+                    tabsetPanel(
+                      tabPanel("Naive Bayes",
+                               plotOutput("nb_plot"),
+                               p("Naive Bayes Confusion Matrix Details:"),
+                               p("The Naive Bayes confusion matrix represents the performance of a probabilistic classifier based on Bayes' Theorem. The matrix shows the counts of predicted versus actual values (true positives, true negatives, false positives, false negatives) for a binary classification task."),
+                               p("Breaking down the confusion matrix for Naive Bayes:"),
+                               p("True Negatives (TN): The model correctly predicted the negative class 5422 times (Reference 0 and predicted 0). This means that the model did a great job in predicting instances that truly belong to class 0."),
+                               p("False Positives (FP): The model incorrectly predicted class 1 instead of class 0, leading to 1526 false positives (Reference 0 but predicted 1). These are instances where the model mistakenly flagged a negative class as positive."),
+                               p("False Negatives (FN): The model incorrectly predicted class 0 for instances that actually belong to class 1, leading to 2087 false negatives (Reference 1 but predicted 0). This shows where the model failed to correctly identify positive instances."),
+                               p("True Positives (TP): The model correctly predicted the positive class 4721 times (Reference 1 and predicted 1). This indicates the model’s strength in identifying positive instances."),
+                               p("This matrix indicates that while Naive Bayes performs well in predicting class 0, it struggles with classifying class 1, as evidenced by the relatively higher false negatives.")),
+                      tabPanel("Logistic Regression",
+                               plotOutput("lg_plot"),
+                               p("Logistic Regression Confusion Matrix Details:"),
+                               p("Logistic Regression models the log-odds of the probability of a binary outcome. The confusion matrix here shows the true positives, false positives, true negatives, and false negatives for the Logistic Regression model."),
+                               p("Breaking down the confusion matrix for Logistic Regression:"),
+                               p("True Negatives (TN): The model correctly predicted the negative class 5468 times (Reference 0 and predicted 0). This shows the model's strong ability to classify negative instances correctly."),
+                               p("False Positives (FP): The model incorrectly predicted class 1 instead of class 0, leading to 1480 false positives (Reference 0 but predicted 1). These are instances where the model falsely flagged negatives as positives."),
+                               p("False Negatives (FN): The model incorrectly predicted class 0 for instances that actually belong to class 1, resulting in 2199 false negatives (Reference 1 but predicted 0). This indicates some misclassification of the positive class."),
+                               p("True Positives (TP): The model correctly predicted the positive class 4609 times (Reference 1 and predicted 1). This shows a good performance in correctly classifying positive instances."),
+                               p("This confusion matrix indicates that Logistic Regression is fairly balanced between classifying positives and negatives, but it still suffers from a moderate number of false positives and false negatives.")),
+                      tabPanel("Neural Network",
+                               plotOutput("nn_plot"),
+                               p("Neural Network Confusion Matrix Details:"),
+                               p("The Neural Network confusion matrix shows the model’s performance in a binary classification task. Neural networks are highly flexible models capable of capturing complex patterns."),
+                               p("Breaking down the confusion matrix for Neural Network:"),
+                               p("True Negatives (TN): The model correctly predicted the negative class 5422 times (Reference 0 and predicted 0). The model did a decent job in predicting instances that belong to class 0."),
+                               p("False Positives (FP): The model incorrectly predicted class 1 instead of class 0, resulting in 1526 false positives (Reference 0 but predicted 1). This suggests the model may be slightly overpredicting the positive class for some instances."),
+                               p("False Negatives (FN): The model incorrectly predicted class 0 for instances that actually belong to class 1, leading to 2087 false negatives (Reference 1 but predicted 0). These are cases where the model missed the positive class."),
+                               p("True Positives (TP): The model correctly predicted the positive class 4721 times (Reference 1 and predicted 1). This demonstrates the Neural Network's reasonable ability to identify positive instances."),
+                               p("This confusion matrix indicates that the Neural Network is performing relatively well but has room for improvement in correctly classifying negative cases and reducing false negatives.")),
+                      tabPanel("Random Forest",
+                               plotOutput("rf_plot"),
+                               p("Random Forest is an ensemble model that combines multiple decision trees. This confusion matrix visualizes the performance of the model in binary classification."),
+                               p("Breaking down the confusion matrix for Random Forest:"),
+                               p("True Negatives (TN): The model correctly predicted the negative class 5429 times (Reference 0 and predicted 0). This shows Random Forest's strength in correctly identifying class 0 instances."),
+                               p("False Positives (FP): The model incorrectly predicted class 1 instead of class 0, leading to 1519 false positives (Reference 0 but predicted 1). These are cases where the model mistakenly predicted the positive class."),
+                               p("False Negatives (FN): The model misclassified class 0 as class 1 for 2124 instances (Reference 1 but predicted 0). This shows where the model missed positive instances."),
+                               p("True Positives (TP): The model correctly predicted the positive class 4684 times (Reference 1 and predicted 1). This demonstrates Random Forest's ability to predict positive cases correctly."),
+                               p("This confusion matrix shows that Random Forest performs relatively well across both classes, but it still has a noticeable number of false negatives and false positives."))
+                    )
+                  )
+                )
+              )
       )
     )
   ),
@@ -490,10 +588,10 @@ server <- function(input, output, session) {
     output$confusion_lr <- renderPrint(confusion_matrix_lr$table)
     
     output$metrics_lr <- renderPrint({
-      paste0("True Positive (TP): ", confusion_matrix_lr$table[2,2], "\n",
-             "True Negative (TN): ", confusion_matrix_lr$table[1,1], "\n",
-             "False Positive (FP): ", confusion_matrix_lr$table[1,2], "\n",
-             "False Negative (FN): ", confusion_matrix_lr$table[2,1])
+      paste0("True Positive (TP): ", confusion_matrix_lr$table[2, 2], "\n",
+             "True Negative (TN): ", confusion_matrix_lr$table[1, 1], "\n",
+             "False Positive (FP): ", confusion_matrix_lr$table[1, 2], "\n",
+             "False Negative (FN): ", confusion_matrix_lr$table[2, 1])
     })
 
     # Calculate additional metrics
@@ -808,10 +906,10 @@ server <- function(input, output, session) {
   })
 
   # Random Forest Feature Importance
-  output$feature_importance_plot_rf <- renderPlot({
+   output$feature_importance_plot_rf <- renderPlot({
     rf_model_info <- random_forest_model()
     rf_importance <- importance(rf_model_info$model)
-    rf_importance_df <- data.frame(Feature = rownames(rf_importance), Importance = rf_importance[,1]) %>%
+    rf_importance_df <- data.frame(Feature = rownames(rf_importance), Importance = rf_importance[, 1]) %>%
                         arrange(desc(Importance))
     
     ggplot(rf_importance_df, aes(x = reorder(Feature, Importance), y = Importance)) +
@@ -1230,7 +1328,7 @@ server <- function(input, output, session) {
          main = "Elbow Method")
   })
 
- # Hierarchical Clustering
+  # Hierarchical Clustering
   output$hclust_plot <- renderPlot({
     # Sample the data to avoid drawing too many points
     sampled_dfCardio <- dfCardio[sample(nrow(dfCardio), min(1000, nrow(dfCardio))), ]  # Sample up to 1000 rows
@@ -1285,45 +1383,25 @@ server <- function(input, output, session) {
     }
   })
 
-  # Statistical Tests Logic
-  observeEvent(input$run_chisq_test, {
-    # Example: Chi-Squared Test
-    chisq_result <- chisq.test(table(dfCardio$gender, dfCardio$cardio))
-    output$chisq_result <- renderPrint(chisq_result)
+  # Render the Naive Bayes Confusion Matrix
+  output$nb_plot <- renderPlot({
+    create_cm_plot(nb_cm, "Naive Bayes")
   })
-
-  observeEvent(input$run_t_test, {
-    # Example: T-Test
-    t_test_result <- t.test(dfCardio$age ~ dfCardio$cardio)
-    output$t_test_result <- renderPrint(t_test_result)
+  
+  # Render the Logistic Regression Confusion Matrix
+  output$lg_plot <- renderPlot({
+    create_cm_plot(lg_cm, "Logistic Regression")
   })
-
-  observeEvent(input$run_anova_test, {
-    # Example: ANOVA
-    anova_result <- aov(age ~ cardio, data = dfCardio)
-    output$anova_result <- renderPrint(summary(anova_result))
+  
+  # Render the Neural Network Confusion Matrix
+  output$nn_plot <- renderPlot({
+    create_cm_plot(nn_cm, "Neural Network")
   })
-
-  observeEvent(input$run_mann_whitney, {
-    # Example: Mann-Whitney U Test
-    mann_whitney_result <- wilcox.test(age ~ cardio, data = dfCardio)
-    output$mann_whitney_result <- renderPrint(mann_whitney_result)
-  })
-
-  observeEvent(input$run_kruskal_test, {
-    # Example: Kruskal-Wallis Test
-    kruskal_result <- kruskal.test(age ~ cardio, data = dfCardio)
-    output$kruskal_result <- renderPrint(kruskal_result)
-  })
-
-  observeEvent(input$run_ks_test, {
-    # Example: Kolmogorov-Smirnov Test
-    ks_test_result <- ks.test(dfCardio$ap_hi[dfCardio$cardio == 0], dfCardio$ap_hi[dfCardio$cardio == 1])
-    output$ks_result <- renderPrint(ks_test_result)
+  
+  # Render the Random Forest Confusion Matrix
+  output$rf_plot <- renderPlot({
+    create_cm_plot(rf_cm, "Random Forest")
   })
 }
 
 shinyApp(ui = ui, server = server)
-
-
-
