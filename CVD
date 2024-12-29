@@ -80,7 +80,8 @@ ui <- dashboardPage(
       menuItem("Random Forest Model", tabName = "random_forest", icon = icon("cogs")),
       menuItem("KNN Model", tabName = "knn_model", icon = icon("cogs")),
       menuItem("Naive Bayes Model", tabName = "naive_bayes_model", icon = icon("cogs")),
-      menuItem("Neural Network Model", tabName = "neural_network_model", icon = icon("cogs")),  # Newly added tab for Neural Network
+      menuItem("Neural Network Model", tabName = "neural_network_model", icon = icon("cogs")),
+      menuItem("Statistical Tests", tabName = "statistical_tests", icon = icon("calculator")),  # Newly added tab for Statistical Tests
       menuItem("Model Comparison", tabName = "model_comparison", icon = icon("chart-bar")),
       menuItem("Performance Comparison", tabName = "performance_comparison", icon = icon("chart-pie")),
       menuItem("K-Means Clustering", tabName = "kmeans_clustering", icon = icon("cluster")),
@@ -241,6 +242,29 @@ ui <- dashboardPage(
                 box(title = "Neural Network MCC", status = "success", solidHeader = TRUE, verbatimTextOutput("nn_mcc")),
                 box(title = "Neural Network Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("nn_metrics")),
                 actionButton("next_to_model_comparison", "Next", class = "btn")
+              )
+      ),
+      # Statistical Tests Tab
+      tabItem(tabName = "statistical_tests",
+              fluidRow(
+                box(title = "Chi-Squared Test", status = "primary", solidHeader = TRUE, 
+                    actionButton("run_chisq_test", "Run Chi-Squared Test"),
+                    verbatimTextOutput("chisq_result")),
+                box(title = "T-Tests", status = "primary", solidHeader = TRUE,
+                    actionButton("run_t_test", "Run T-Test"),
+                    verbatimTextOutput("t_test_result")),
+                box(title = "ANOVA", status = "primary", solidHeader = TRUE,
+                    actionButton("run_anova_test", "Run ANOVA"),
+                    verbatimTextOutput("anova_result")),
+                box(title = "Mann-Whitney U Test", status = "primary", solidHeader = TRUE,
+                    actionButton("run_mann_whitney", "Run Mann-Whitney U Test"),
+                    verbatimTextOutput("mann_whitney_result")),
+                box(title = "Kruskal-Wallis Test", status = "primary", solidHeader = TRUE,
+                    actionButton("run_kruskal_test", "Run Kruskal-Wallis Test"),
+                    verbatimTextOutput("kruskal_result")),
+                box(title = "Kolmogorov-Smirnov Test", status = "primary", solidHeader = TRUE,
+                    actionButton("run_ks_test", "Run Kolmogorov-Smirnov Test"),
+                    verbatimTextOutput("ks_result"))
               )
       ),
       # Model Comparison Tab
@@ -1091,14 +1115,6 @@ server <- function(input, output, session) {
     updateTabItems(session, "sidebar", "model_comparison")
   })
 
-  observeEvent(input$next_to_kmeans, {
-    updateTabItems(session, "sidebar", "kmeans_clustering")
-  })
-
-  observeEvent(input$next_to_hierarchical, {
-    updateTabItems(session, "sidebar", "hierarchical_clustering")
-  })
-
   # K-Means Clustering
   output$kmeans_plot <- renderPlot({
     set.seed(123)
@@ -1181,6 +1197,43 @@ server <- function(input, output, session) {
 
       updateTextInput(session, "userInput", value = "")
     }
+  })
+
+  # Statistical Tests Logic
+  observeEvent(input$run_chisq_test, {
+    # Example: Chi-Squared Test
+    chisq_result <- chisq.test(table(dfCardio$gender, dfCardio$cardio))
+    output$chisq_result <- renderPrint(chisq_result)
+  })
+
+  observeEvent(input$run_t_test, {
+    # Example: T-Test
+    t_test_result <- t.test(dfCardio$age ~ dfCardio$cardio)
+    output$t_test_result <- renderPrint(t_test_result)
+  })
+
+  observeEvent(input$run_anova_test, {
+    # Example: ANOVA
+    anova_result <- aov(age ~ cardio, data = dfCardio)
+    output$anova_result <- renderPrint(summary(anova_result))
+  })
+
+  observeEvent(input$run_mann_whitney, {
+    # Example: Mann-Whitney U Test
+    mann_whitney_result <- wilcox.test(age ~ cardio, data = dfCardio)
+    output$mann_whitney_result <- renderPrint(mann_whitney_result)
+  })
+
+  observeEvent(input$run_kruskal_test, {
+    # Example: Kruskal-Wallis Test
+    kruskal_result <- kruskal.test(age ~ cardio, data = dfCardio)
+    output$kruskal_result <- renderPrint(kruskal_result)
+  })
+
+  observeEvent(input$run_ks_test, {
+    # Example: Kolmogorov-Smirnov Test
+    ks_test_result <- ks.test(dfCardio$ap_hi[dfCardio$cardio == 0], dfCardio$ap_hi[dfCardio$cardio == 1])
+    output$ks_result <- renderPrint(ks_test_result)
   })
 }
 
