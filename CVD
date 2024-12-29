@@ -81,7 +81,7 @@ ui <- dashboardPage(
       menuItem("KNN Model", tabName = "knn_model", icon = icon("cogs")),
       menuItem("Naive Bayes Model", tabName = "naive_bayes_model", icon = icon("cogs")),
       menuItem("Neural Network Model", tabName = "neural_network_model", icon = icon("cogs")),
-      menuItem("Statistical Tests", tabName = "statistical_tests", icon = icon("calculator")),  # Newly added tab for Statistical Tests
+      menuItem("Statistical Tests", tabName = "statistical_tests", icon = icon("calculator")),
       menuItem("Model Comparison", tabName = "model_comparison", icon = icon("chart-bar")),
       menuItem("Performance Comparison", tabName = "performance_comparison", icon = icon("chart-pie")),
       menuItem("K-Means Clustering", tabName = "kmeans_clustering", icon = icon("cluster")),
@@ -90,7 +90,8 @@ ui <- dashboardPage(
       menuItem("Predict", tabName = "predict", icon = icon("heartbeat")),
       menuItem("Recommendations", tabName = "recommendations", icon = icon("book")),
       menuItem("Chatbot", tabName = "chatbot", icon = icon("comments")),
-      menuItem("Model Accuracies Comparison", tabName = "model_accuracies_comparison", icon = icon("chart-line"))
+      menuItem("Model Accuracies Comparison", tabName = "model_accuracies_comparison", icon = icon("chart-line")),
+      menuItem("Confusion Matrices", tabName = "confusion_matrices", icon = icon("table"))  # New tab for confusion matrices
     )
   ),
   dashboardBody(
@@ -366,6 +367,37 @@ ui <- dashboardPage(
                   "))
                 )
               )
+      ),
+      # Confusion Matrices Tab
+      tabItem(tabName = "confusion_matrices",
+              fluidRow(
+                box(title = "Logistic Regression Confusion Matrix", status = "primary", solidHeader = TRUE, 
+                    verbatimTextOutput("confusion_lr")),
+                box(title = "Decision Tree Confusion Matrix", status = "primary", solidHeader = TRUE, 
+                    verbatimTextOutput("confusion_dt")),
+                box(title = "Random Forest Confusion Matrix", status = "primary", solidHeader = TRUE, 
+                    verbatimTextOutput("confusion_rf")),
+                box(title = "KNN Confusion Matrix", status = "primary", solidHeader = TRUE, 
+                    verbatimTextOutput("confusion_knn")),
+                box(title = "Naive Bayes Confusion Matrix", status = "primary", solidHeader = TRUE, 
+                    verbatimTextOutput("confusion_nb")),
+                box(title = "Neural Network Confusion Matrix", status = "primary", solidHeader = TRUE, 
+                    verbatimTextOutput("confusion_nn")),
+                box(title = "Metrics", status = "info", solidHeader = TRUE,
+                    div("Logistic Regression:"),
+                    verbatimTextOutput("metrics_lr"),
+                    div("Decision Tree:"),
+                    verbatimTextOutput("metrics_dt"),
+                    div("Random Forest:"),
+                    verbatimTextOutput("metrics_rf"),
+                    div("KNN:"),
+                    verbatimTextOutput("metrics_knn"),
+                    div("Naive Bayes:"),
+                    verbatimTextOutput("metrics_nb"),
+                    div("Neural Network:"),
+                    verbatimTextOutput("metrics_nn")
+                )
+              )
       )
     )
   ),
@@ -453,15 +485,25 @@ server <- function(input, output, session) {
     # Confusion Matrix
     output$confusion <- renderPrint(table(predicted.classes, test.data$cardio))
 
+    # Save confusion matrix metrics for later use
+    confusion_matrix_lr <- confusionMatrix(factor(predicted.classes), factor(test.data$cardio))
+    output$confusion_lr <- renderPrint(confusion_matrix_lr$table)
+    
+    output$metrics_lr <- renderPrint({
+      paste0("True Positive (TP): ", confusion_matrix_lr$table[2,2], "\n",
+             "True Negative (TN): ", confusion_matrix_lr$table[1,1], "\n",
+             "False Positive (FP): ", confusion_matrix_lr$table[1,2], "\n",
+             "False Negative (FN): ", confusion_matrix_lr$table[2,1])
+    })
+
     # Calculate additional metrics
-    confusion_matrix <- confusionMatrix(factor(predicted.classes), factor(test.data$cardio))
-    f1_score <- confusion_matrix$byClass["F1"]
-    precision <- confusion_matrix$byClass["Precision"]
-    recall <- confusion_matrix$byClass["Recall"]
-    tn <- confusion_matrix$table[1, 1]  # True Negative
-    fp <- confusion_matrix$table[1, 2]  # False Positive
-    fn <- confusion_matrix$table[2, 1]  # False Negative
-    tp <- confusion_matrix$table[2, 2]  # True Positive
+    f1_score <- confusion_matrix_lr$byClass["F1"]
+    precision <- confusion_matrix_lr$byClass["Precision"]
+    recall <- confusion_matrix_lr$byClass["Recall"]
+    tn <- confusion_matrix_lr$table[1, 1]  # True Negative
+    fp <- confusion_matrix_lr$table[1, 2]  # False Positive
+    fn <- confusion_matrix_lr$table[2, 1]  # False Negative
+    tp <- confusion_matrix_lr$table[2, 2]  # True Positive
 
     # Calculate specificity
     specificity <- tn / (tn + fp)
@@ -472,7 +514,7 @@ server <- function(input, output, session) {
     output$mcc <- renderPrint(round(mcc, 2))
 
     # Calculate Kappa
-    kappa <- confusion_matrix$overall["Kappa"]
+    kappa <- confusion_matrix_lr$overall["Kappa"]
     output$kappa <- renderPrint(round(kappa, 2))
 
     output$metrics <- renderPrint({
@@ -678,7 +720,18 @@ server <- function(input, output, session) {
   output$rf_confusion <- renderPrint({
     rf_model_info <- random_forest_model()
     confusion_mtx <- table(predict(rf_model_info$model, rf_model_info$test), rf_model_info$test$cardio)
-    print(confusion_mtx)
+    output$confusion_rf <- renderPrint(confusion_mtx)
+    
+    # Save confusion matrix metrics for later use
+    confusion_matrix_rf <- confusionMatrix(factor(predict(rf_model_info$model, rf_model_info$test)), factor(rf_model_info$test$cardio))
+    output$confusion_rf <- renderPrint(confusion_matrix_rf$table)
+
+    output$metrics_rf <- renderPrint({
+      paste0("True Positive (TP): ", confusion_matrix_rf$table[2,2], "\n",
+             "True Negative (TN): ", confusion_matrix_rf$table[1,1], "\n",
+             "False Positive (FP): ", confusion_matrix_rf$table[1,2], "\n",
+             "False Negative (FN): ", confusion_matrix_rf$table[2,1])
+    })
   })
 
   output$rf_specificity <- renderPrint({
@@ -804,7 +857,18 @@ server <- function(input, output, session) {
   output$knn_confusion <- renderPrint({
     knn_model_info <- knn_model()
     confusion_mtx <- table(knn_model_info$predictions, knn_model_info$test$cardio)
-    print(confusion_mtx)
+    output$confusion_knn <- renderPrint(confusion_mtx)
+
+    # Save confusion matrix metrics for later use
+    confusion_matrix_knn <- confusionMatrix(factor(knn_model_info$predictions), factor(knn_model_info$test$cardio))
+    output$confusion_knn <- renderPrint(confusion_matrix_knn$table)
+
+    output$metrics_knn <- renderPrint({
+      paste0("True Positive (TP): ", confusion_matrix_knn$table[2,2], "\n",
+             "True Negative (TN): ", confusion_matrix_knn$table[1,1], "\n",
+             "False Positive (FP): ", confusion_matrix_knn$table[1,2], "\n",
+             "False Negative (FN): ", confusion_matrix_knn$table[2,1])
+    })
   })
 
   output$knn_specificity <- renderPrint({
@@ -860,7 +924,18 @@ server <- function(input, output, session) {
   output$nb_confusion <- renderPrint({
     nb_model_info <- naive_bayes_model()
     confusion_mtx <- table(nb_model_info$predictions, nb_model_info$test$cardio)
-    print(confusion_mtx)
+    output$confusion_nb <- renderPrint(confusion_mtx)
+
+    # Save confusion matrix metrics for later use
+    confusion_matrix_nb <- confusionMatrix(factor(nb_model_info$predictions), factor(nb_model_info$test$cardio))
+    output$confusion_nb <- renderPrint(confusion_matrix_nb$table)
+
+    output$metrics_nb <- renderPrint({
+      paste0("True Positive (TP): ", confusion_matrix_nb$table[2,2], "\n",
+             "True Negative (TN): ", confusion_matrix_nb$table[1,1], "\n",
+             "False Positive (FP): ", confusion_matrix_nb$table[1,2], "\n",
+             "False Negative (FN): ", confusion_matrix_nb$table[2,1])
+    })
   })
 
   output$nb_specificity <- renderPrint({
@@ -923,7 +998,18 @@ server <- function(input, output, session) {
   output$nn_confusion <- renderPrint({
     nn_model_info <- neural_network_model()
     confusion_mtx <- table(nn_model_info$predictions, nn_model_info$test$cardio)
-    print(confusion_mtx)
+    output$confusion_nn <- renderPrint(confusion_mtx)
+
+    # Save confusion matrix metrics for later use
+    confusion_matrix_nn <- confusionMatrix(factor(nn_model_info$predictions), factor(nn_model_info$test$cardio))
+    output$confusion_nn <- renderPrint(confusion_matrix_nn$table)
+
+    output$metrics_nn <- renderPrint({
+      paste0("True Positive (TP): ", confusion_matrix_nn$table[2,2], "\n",
+             "True Negative (TN): ", confusion_matrix_nn$table[1,1], "\n",
+             "False Positive (FP): ", confusion_matrix_nn$table[1,2], "\n",
+             "False Negative (FN): ", confusion_matrix_nn$table[2,1])
+    })
   })
 
   output$nn_specificity <- renderPrint({
@@ -1144,7 +1230,7 @@ server <- function(input, output, session) {
          main = "Elbow Method")
   })
 
-  # Hierarchical Clustering
+ # Hierarchical Clustering
   output$hclust_plot <- renderPlot({
     # Sample the data to avoid drawing too many points
     sampled_dfCardio <- dfCardio[sample(nrow(dfCardio), min(1000, nrow(dfCardio))), ]  # Sample up to 1000 rows
@@ -1238,3 +1324,6 @@ server <- function(input, output, session) {
 }
 
 shinyApp(ui = ui, server = server)
+
+
+
