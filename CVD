@@ -942,7 +942,7 @@ server <- function(input, output, session) {
     train.knn <- df[training.samples, ]
     test.knn <- df[-training.samples, ]
     
-    knn_pred <- knn(train = train.knn[,-1], test = test.knn[,-1], cl = train.knn$cardio, k = 5)
+    knn_pred <- knn(train.knn[,-1], test.knn[,-1], cl = train.knn$cardio, k = 5)
     return(list(predictions = knn_pred, test = test.knn))
   })
 
