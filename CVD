@@ -135,7 +135,12 @@ ui <- dashboardPage(
       menuItem("Chatbot", tabName = "chatbot", icon = icon("comments")),
       menuItem("Model Accuracies Comparison", tabName = "model_accuracies_comparison", icon = icon("chart-line")),
       menuItem("Confusion Matrices", tabName = "confusion_matrices", icon = icon("table")),
-      menuItem("Advanced Confusion Matrices", tabName = "advanced_confusion_matrices", icon = icon("table"))  # New tab for advanced confusion matrices
+      menuItem("Advanced Confusion Matrices", tabName = "advanced_confusion_matrices", icon = icon("table")),  # New tab for advanced confusion matrices
+      menuItem("Bivariate Analysis", tabName = "bivariate_analysis", icon = icon("chart-bar")),
+      menuItem("Violin Plot Bivariate", tabName = "violin_plot_bivariate", icon = icon("chart-bar")),
+      menuItem("Density Plot Bivariate", tabName = "density_plot_bivariate", icon = icon("chart-bar")),
+      menuItem("Scatter Plot Bivariate", tabName = "scatter_plot_bivariate", icon = icon("chart-bar")),
+      menuItem("Correlation Plot", tabName = "correlation_plot", icon = icon("table"))
     )
   ),
   dashboardBody(
@@ -199,6 +204,55 @@ ui <- dashboardPage(
                 box(title = "Scatter Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("scatter", height = "300px")),
                 box(title = "Violin Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("violin", height = "300px")),
                 box(title = "Density Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("density", height = "300px"))
+              )
+      ),
+      # New Bivariate Analysis Tabs
+      # Back-to-back Histogram Tab
+      tabItem(tabName = "bivariate_analysis",
+              fluidRow(
+                box(title = "Back-to-Back Histograms", status = "primary", solidHeader = TRUE,
+                    selectInput("var1_hist", "Choose Variable 1:", names(dfCardio_raw_num)),
+                    selectInput("var2_hist", "Choose Variable 2:", names(dfCardio_raw_num)),
+                    plotOutput("back_to_back_histograms")
+                )
+              )
+      ),
+      # Violin Plot Bivariate Analysis Tab
+      tabItem(tabName = "violin_plot_bivariate",
+              fluidRow(
+                box(title = "Violin Plot Bivariate Analysis", status = "primary", solidHeader = TRUE,
+                    selectInput("var1_violin", "Choose Variable 1:", names(dfCardio_raw_num)),
+                    selectInput("var2_violin", "Choose Variable 2:", names(dfCardio_raw_cate)),
+                    plotOutput("violin_plot")
+                )
+              )
+      ),
+      # Density Plot Bivariate Analysis Tab
+      tabItem(tabName = "density_plot_bivariate",
+              fluidRow(
+                box(title = "Density Plot Bivariate Analysis", status = "primary", solidHeader = TRUE,
+                    selectInput("var1_density", "Choose Variable 1:", names(dfCardio_raw_num)),
+                    selectInput("var2_density", "Choose Variable 2:", names(dfCardio_raw_cate)),
+                    plotOutput("density_plot")
+                )
+              )
+      ),
+      # Scatter Plot Bivariate Analysis Tab
+      tabItem(tabName = "scatter_plot_bivariate",
+              fluidRow(
+                box(title = "Scatter Plot Bivariate Analysis", status = "primary", solidHeader = TRUE,
+                    selectInput("x_scatter", "Choose X Variable:", names(dfCardio_raw_num)),
+                    selectInput("y_scatter", "Choose Y Variable:", names(dfCardio_raw_num)),
+                    plotOutput("scatter_plot")
+                )
+              )
+      ),
+      # Correlation Plot Tab
+      tabItem(tabName = "correlation_plot",
+              fluidRow(
+                box(title = "Correlation Plot", status = "primary", solidHeader = TRUE,
+                    plotOutput("correlation_matrix_plot")
+                )
               )
       ),
       # Logistic Regression Model Tab
@@ -507,6 +561,27 @@ server <- function(input, output, session) {
   chat_history <- reactiveVal(data.frame(Role = character(0), Message = character(0), stringsAsFactors = FALSE))
   prediction_percentage <- reactiveVal(NA)
 
+  # Initialize variables to avoid "undefined" errors
+  # These are the columns where you would set default values on initialization
+  if (!exists("gender")) {
+      gender <- 0  # Default gender
+  }
+  if (!exists("cholesterol")) {
+      cholesterol <- 1  # Default cholesterol
+  }
+  if (!exists("gluc")) {
+      gluc <- 1  # Default gluc
+  }
+  if (!exists("smoke")) {
+      smoke <- 0  # Default smoke
+  }
+  if (!exists("alcohol")) {
+      alcohol <- 0  # Default alcohol
+  }
+  if (!exists("active")) {
+      active <- 0  # Default active
+  }
+
   hist_x <- eventReactive(input$click, { input$hist_x })
   bar_x <- eventReactive(input$click, { input$bar_x })
   binCount <- eventReactive(input$click, { input$binCount })
@@ -556,6 +631,55 @@ server <- function(input, output, session) {
   output$density <- renderPlot({
     ggplot(dfCardio_raw, aes_string(x = hist_x())) + 
       geom_density(fill = "lightblue", color = "darkblue", alpha = 0.5)
+  })
+
+  # Back-to-Back Histograms
+  output$back_to_back_histograms <- renderPlot({
+    ggplot() +
+      geom_histogram(data = dfCardio[dfCardio$cardio == 0,], aes_string(x = input$var1_hist), 
+                     fill = "blue", alpha = 0.5, position = "identity", bins = 30) +
+      geom_histogram(data = dfCardio[dfCardio$cardio == 1,], aes_string(x = input$var2_hist), 
+                     fill = "red", alpha = 0.5, position = "identity", bins = 30) +
+      labs(title = "Back-to-Back Histograms", x = "Values", y = "Count") +
+      theme_minimal()
+  })
+
+  # Violin Plot
+  output$violin_plot <- renderPlot({
+    ggplot(dfCardio, aes_string(x = input$var2_violin, y = input$var1_violin)) +
+      geom_violin(fill = "lightblue") +
+      labs(title = "Violin Plot Bivariate Analysis", x = input$var2_violin, y = input$var1_violin) + 
+      theme_minimal()
+  })
+
+  # Density Plot
+  output$density_plot <- renderPlot({
+    ggplot(dfCardio, aes_string(x = input$var1_density, fill = input$var2_density)) +
+      geom_density(alpha = 0.5) +
+      labs(title = "Density Plot Bivariate Analysis", x = input$var1_density, y = "Density") +
+      theme_minimal()
+  })
+  
+  # Scatter Plot
+  output$scatter_plot <- renderPlot({
+    ggplot(dfCardio, aes_string(x = input$x_scatter, y = input$y_scatter)) +
+      geom_point(aes(color = cardio)) + 
+      labs(title = "Scatter Plot Bivariate Analysis", x = input$x_scatter, y = input$y_scatter) +
+      theme_minimal()
+  })
+
+  # Correlation Matrix Plot
+  output$correlation_matrix_plot <- renderPlot({
+    correlation_vals <- cor(dfCardio[, numeric_vars])
+    melted_corr <- melt(correlation_vals)
+    ggplot(melted_corr, aes(Var1, Var2, fill = value)) +
+      geom_tile() + 
+      scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                          min = -1, max = 1, limit = c(-1,1), 
+                          name="Correlation") + 
+      theme_minimal() +
+      labs(title = "Correlation Plot", x = "", y = "") +
+      theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
   })
 
   # Logistic Regression Model and Predictions
@@ -635,19 +759,19 @@ server <- function(input, output, session) {
     roc_curve <- roc(test.data$cardio, probabilities)
     output$roc_plot_lr <- renderPlot({
       ggroc(roc_curve, alpha = 0.8, color = "blue") + 
-      ggtitle("ROC Curve - Logistic Regression") + 
-      xlab("False Positive Rate") +
-      ylab("True Positive Rate")
+        ggtitle("ROC Curve - Logistic Regression") + 
+        xlab("False Positive Rate") +
+        ylab("True Positive Rate")
     })
 
     # AUC for Logistic Regression
     auc_value <- auc(roc_curve)
     output$auc_plot_lr <- renderPlot({
       ggroc(roc_curve, alpha = 0.8, color = "blue") + 
-      annotate("text", x = 0.5, y = 0.5, label = paste("AUC =", round(auc_value, 2)), size = 5, color = "red") +
-      ggtitle("ROC Curve with AUC - Logistic Regression") + 
-      xlab("False Positive Rate") +
-      ylab("True Positive Rate")
+        annotate("text", x = 0.5, y = 0.5, label = paste("AUC =", round(auc_value, 2)), size = 5, color = "red") +
+        ggtitle("ROC Curve with AUC - Logistic Regression") + 
+        xlab("False Positive Rate") +
+        ylab("True Positive Rate")
     })
 
     output$PredictBox <- renderInfoBox({
@@ -761,7 +885,7 @@ server <- function(input, output, session) {
     
     accuracy_value <- confusion_mtx$overall["Accuracy"]
     kappa_value <- confusion_mtx$overall["Kappa"]
-    f1_value <- confusion_mtx$byClass["F1"]
+    f1_value <- confusion_mtx$byClass["F1"] 
     
     paste0("Accuracy: ", round(accuracy_value * 100, 2), "%\n",
            "Kappa: ", round(kappa_value, 2), "\n",
@@ -1090,7 +1214,7 @@ server <- function(input, output, session) {
   output$nn_accuracy <- renderPrint({
     nn_model_info <- neural_network_model()
     accuracy <- mean(nn_model_info$predictions == nn_model_info$test$cardio)
-    paste0("Accuracy: ", round(accuracy * 100, 2), "%")
+       paste0("Accuracy: ", round(accuracy * 100, 2), "%")
   })
 
   output$nn_confusion <- renderPrint({
@@ -1146,20 +1270,19 @@ server <- function(input, output, session) {
   output$performance_table <- renderDataTable({
     # Gather metrics for all models
     metrics <- data.frame(
-      Model = c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network"),  # Include Neural Network
+      Model = c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network"),
       Accuracy = c(round(mean(predicted.classes == test.data$cardio), 2), 
                    confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$overall["Accuracy"],
                    mean(predict(random_forest_model()$model, random_forest_model()$test) == random_forest_model()$test$cardio),
                    mean(knn_model()$predictions == knn_model()$test$cardio),
                    mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio),
-                   mean(neural_network_model()$predictions == neural_network_model()$test$cardio)),  # Neural Network accuracy
+                   mean(neural_network_model()$predictions == neural_network_model()$test$cardio)),
       F1_Score = c(f1_score,
                    confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$byClass["F1"],
                    confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["F1"],
                    confusionMatrix(factor(knn_model()$predictions), factor(knn_model()$test$cardio))$byClass["F1"],
                    confusionMatrix(factor(naive_bayes_model()$predictions), factor(naive_bayes_model()$test$cardio))$byClass["F1"],
-                   confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["F1"]  # Neural Network F1 Score
-      )
+                   confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["F1"])
     )
 
     # Setting options for appearance of datatable
@@ -1168,7 +1291,7 @@ server <- function(input, output, session) {
 
   # Plotting metrics in model comparison tab
   output$comparison_plot <- renderPlot({
-    models <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")  # Include Neural Network
+    models <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")
     
     accuracy_values <- c(
       round(mean(predicted.classes == test.data$cardio), 2), 
@@ -1176,7 +1299,7 @@ server <- function(input, output, session) {
       mean(predict(random_forest_model()$model, random_forest_model()$test) == random_forest_model()$test$cardio),
       mean(knn_model()$predictions == knn_model()$test$cardio),
       mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio),
-      mean(neural_network_model()$predictions == neural_network_model()$test$cardio)  # Neural Network accuracy
+      mean(neural_network_model()$predictions == neural_network_model()$test$cardio)
     )
     
     f1_values <- c(
@@ -1185,7 +1308,7 @@ server <- function(input, output, session) {
       confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["F1"],
       confusionMatrix(factor(knn_model()$predictions), factor(knn_model()$test$cardio))$byClass["F1"],
       confusionMatrix(factor(naive_bayes_model()$predictions), factor(naive_bayes_model()$test$cardio))$byClass["F1"],
-      confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["F1"]  # Neural Network F1 Score
+      confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["F1"]
     )
     
     # Combine metrics into a dataframe
@@ -1200,26 +1323,26 @@ server <- function(input, output, session) {
   })
 
   output$pie_chart <- renderPlot({
-    models <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")  # Include Neural Network
-    
+    models <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")
+
     accuracy_values <- c(
       round(mean(predicted.classes == test.data$cardio), 2), 
       confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$overall["Accuracy"],
       mean(predict(random_forest_model()$model, random_forest_model()$test) == random_forest_model()$test$cardio),
       mean(knn_model()$predictions == knn_model()$test$cardio),
       mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio),
-      mean(neural_network_model()$predictions == neural_network_model()$test$cardio)  # Neural Network accuracy
+      mean(neural_network_model()$predictions == neural_network_model()$test$cardio)
     )
-    
+
     f1_values <- c(
       f1_score,
       confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$byClass["F1"],
       confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["F1"],
       confusionMatrix(factor(knn_model()$predictions), factor(knn_model()$test$cardio))$byClass["F1"],
       confusionMatrix(factor(naive_bayes_model()$predictions), factor(naive_bayes_model()$test$cardio))$byClass["F1"],
-      confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["F1"]  # Neural Network F1 Score
+      confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["F1"]
     )
-    
+
     metrics_combined <- data.frame(Model = models, Accuracy = accuracy_values, F1_Score = f1_values)
 
     # Create Pie Chart for Accuracy
@@ -1232,16 +1355,16 @@ server <- function(input, output, session) {
 
   # Plotting accuracies comparison
   output$accuracies_comparison_plot <- renderPlot({
-    model_names <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")  # Include Neural Network
+    model_names <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")
 
     # Training accuracies
     training_accuracies <- c(
       round(mean(predicted.classes == train.data$cardio), 2),
       confusionMatrix(factor(predict(decision_tree_model()$model, train.data, type = "class")), factor(train.data$cardio))$overall["Accuracy"],
       mean(predict(random_forest_model()$model, train.data) == train.data$cardio),
-      mean(knn_model()$predictions[train.data$cardio == train.data$cardio]),  # This line should be updated according to the KNN implementation
-      mean(naive_bayes_model()$predictions[train.data$cardio == train.data$cardio]),  # This line should be updated according to the Naive Bayes implementation
-      mean(neural_network_model()$predictions[train.data$cardio == train.data$cardio])  # Neural Network training accuracy
+      mean(knn_model()$predictions[train.data$cardio == train.data$cardio]),
+      mean(naive_bayes_model()$predictions[train.data$cardio == train.data$cardio]),
+      mean(neural_network_model()$predictions[train.data$cardio == train.data$cardio])
     )
 
     # Testing accuracies
@@ -1251,7 +1374,7 @@ server <- function(input, output, session) {
       mean(predict(random_forest_model()$model, test.data) == test.data$cardio),
       mean(knn_model()$predictions == knn_model()$test$cardio),
       mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio),
-      mean(neural_network_model()$predictions == neural_network_model()$test$cardio)  # Neural Network testing accuracy
+      mean(neural_network_model()$predictions == neural_network_model()$test$cardio)
     )
     
     # Plotting
@@ -1292,7 +1415,7 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$next_to_neural_network, {
-    updateTabItems(session, "sidebar", "neural_network_model")  # Navigation to Neural Network
+    updateTabItems(session, "sidebar", "neural_network_model")
   })
 
   observeEvent(input$next_to_model_comparison, {
@@ -1441,4 +1564,5 @@ server <- function(input, output, session) {
   })
 }
 
+# Create and run the Shiny app
 shinyApp(ui = ui, server = server)
