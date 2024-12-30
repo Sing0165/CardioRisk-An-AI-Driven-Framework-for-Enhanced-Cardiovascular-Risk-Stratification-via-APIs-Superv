@@ -135,7 +135,7 @@ ui <- dashboardPage(
       menuItem("Chatbot", tabName = "chatbot", icon = icon("comments")),
       menuItem("Model Accuracies Comparison", tabName = "model_accuracies_comparison", icon = icon("chart-line")),
       menuItem("Confusion Matrices", tabName = "confusion_matrices", icon = icon("table")),
-      menuItem("Advanced Confusion Matrices", tabName = "advanced_confusion_matrices", icon = icon("table")),  # New tab for advanced confusion matrices
+      menuItem("Advanced Confusion Matrices", tabName = "advanced_confusion_matrices", icon = icon("table")),
       menuItem("Bivariate Analysis", tabName = "bivariate_analysis", icon = icon("chart-bar")),
       menuItem("Violin Plot Bivariate", tabName = "violin_plot_bivariate", icon = icon("chart-bar")),
       menuItem("Density Plot Bivariate", tabName = "density_plot_bivariate", icon = icon("chart-bar")),
@@ -564,24 +564,25 @@ server <- function(input, output, session) {
   # Initialize variables to avoid "undefined" errors
   # These are the columns where you would set default values on initialization
   if (!exists("gender")) {
-      gender <- 0  # Default gender
+    gender <- 0  # Default gender
   }
   if (!exists("cholesterol")) {
-      cholesterol <- 1  # Default cholesterol
+    cholesterol <- 1  # Default cholesterol
   }
   if (!exists("gluc")) {
-      gluc <- 1  # Default gluc
+    gluc <- 1  # Default gluc
   }
   if (!exists("smoke")) {
-      smoke <- 0  # Default smoke
+    smoke <- 0  # Default smoke
   }
   if (!exists("alcohol")) {
-      alcohol <- 0  # Default alcohol
+    alcohol <- 0  # Default alcohol
   }
   if (!exists("active")) {
-      active <- 0  # Default active
+    active <- 0  # Default active
   }
 
+  # Ensure that input variables are updated correctly
   hist_x <- eventReactive(input$click, { input$hist_x })
   bar_x <- eventReactive(input$click, { input$bar_x })
   binCount <- eventReactive(input$click, { input$binCount })
@@ -675,11 +676,10 @@ server <- function(input, output, session) {
     ggplot(melted_corr, aes(Var1, Var2, fill = value)) +
       geom_tile() + 
       scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
-                          min = -1, max = 1, limit = c(-1,1), 
-                          name="Correlation") + 
+                           limit = c(-1, 1), name = "Correlation") + 
       theme_minimal() +
       labs(title = "Correlation Plot", x = "", y = "") +
-      theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+      theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1))
   })
 
   # Logistic Regression Model and Predictions
@@ -1213,8 +1213,8 @@ server <- function(input, output, session) {
 
   output$nn_accuracy <- renderPrint({
     nn_model_info <- neural_network_model()
-    accuracy <- mean(nn_model_info$predictions == nn_model_info$test$cardio)
-       paste0("Accuracy: ", round(accuracy * 100, 2), "%")
+    accuracy <- mean(nn_model_info$predictions == nn_model_info$test$cardio    )
+    paste0("Accuracy: ", round(accuracy * 100, 2), "%")
   })
 
   output$nn_confusion <- renderPrint({
@@ -1260,7 +1260,7 @@ server <- function(input, output, session) {
     f1_score <- confusion_matrix$byClass["F1"]
     precision <- confusion_matrix$byClass["Precision"]
     recall <- confusion_matrix$byClass["Recall"]
-    
+
     paste0("F1 Score: ", round(f1_score, 2), "\n",
            "Precision: ", round(precision, 2), "\n",
            "Recall: ", round(recall, 2))
@@ -1566,3 +1566,4 @@ server <- function(input, output, session) {
 
 # Create and run the Shiny app
 shinyApp(ui = ui, server = server)
+
