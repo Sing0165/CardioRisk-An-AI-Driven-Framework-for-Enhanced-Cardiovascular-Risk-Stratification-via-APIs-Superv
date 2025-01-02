@@ -15,6 +15,7 @@ library(cluster)      # For clustering algorithms
 library(DT)           # For DataTables
 library(nnet)         # For Neural Network
 library(reshape2)     # For reshaping data
+library(GGally)       # For ggpairs
 
 generateContent <- function(prompt, api_key) {
   headers <- c(`Content-Type` = "application/json")
@@ -117,6 +118,7 @@ ui <- dashboardPage(
     sidebarMenu(
       menuItem("Home", tabName = "home", icon = icon("hospital")),
       menuItem("Descriptive Analytics", tabName = "Descriptiveanalytics", icon = icon("chart-bar")),
+      menuItem("Pair Plot", tabName = "pair_plot", icon = icon("table")),  # Added Pair Plot menu item
       menuItem("Logistic Regression Model", tabName = "logistic_model", icon = icon("cogs")),
       menuItem("Feature Importance", tabName = "feature_importance", icon = icon("chart-bar")),
       menuItem("Decision Tree", tabName = "decision_tree", icon = icon("tree")),
@@ -204,6 +206,13 @@ ui <- dashboardPage(
                 box(title = "Scatter Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("scatter", height = "300px")),
                 box(title = "Violin Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("violin", height = "300px")),
                 box(title = "Density Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("density", height = "300px"))
+              )
+      ),
+      # Pair Plot Tab
+      tabItem(tabName = "pair_plot",
+              fluidRow(
+                box(title = "Scatter Plot Matrix", status = "primary", solidHeader = TRUE, 
+                    plotOutput("scatter_plot_matrix", height = "600px"))
               )
       ),
       # New Bivariate Analysis Tabs
@@ -634,7 +643,6 @@ server <- function(input, output, session) {
       geom_density(fill = "lightblue", color = "darkblue", alpha = 0.5)
   })
 
-  # Back-to-Back Histograms
   output$back_to_back_histograms <- renderPlot({
     ggplot() +
       geom_histogram(data = dfCardio[dfCardio$cardio == 0,], aes_string(x = input$var1_hist), 
@@ -645,7 +653,6 @@ server <- function(input, output, session) {
       theme_minimal()
   })
 
-  # Violin Plot
   output$violin_plot <- renderPlot({
     ggplot(dfCardio, aes_string(x = input$var2_violin, y = input$var1_violin)) +
       geom_violin(fill = "lightblue") +
@@ -653,7 +660,6 @@ server <- function(input, output, session) {
       theme_minimal()
   })
 
-  # Density Plot
   output$density_plot <- renderPlot({
     ggplot(dfCardio, aes_string(x = input$var1_density, fill = input$var2_density)) +
       geom_density(alpha = 0.5) +
@@ -661,7 +667,6 @@ server <- function(input, output, session) {
       theme_minimal()
   })
   
-  # Scatter Plot
   output$scatter_plot <- renderPlot({
     ggplot(dfCardio, aes_string(x = input$x_scatter, y = input$y_scatter)) +
       geom_point(aes(color = cardio)) + 
@@ -669,7 +674,6 @@ server <- function(input, output, session) {
       theme_minimal()
   })
 
-  # Correlation Matrix Plot
   output$correlation_matrix_plot <- renderPlot({
     correlation_vals <- cor(dfCardio[, numeric_vars])
     melted_corr <- melt(correlation_vals)
@@ -680,6 +684,13 @@ server <- function(input, output, session) {
       theme_minimal() +
       labs(title = "Correlation Plot", x = "", y = "") +
       theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1))
+  })
+
+  output$scatter_plot_matrix <- renderPlot({
+    ggpairs(dfCardio[, numeric_vars], 
+            aes(color = factor(cardio), alpha = 0.5), 
+            title = "Scatter Plot Matrix") + 
+      theme_minimal()  
   })
 
   # Logistic Regression Model and Predictions
@@ -1213,7 +1224,7 @@ server <- function(input, output, session) {
 
   output$nn_accuracy <- renderPrint({
     nn_model_info <- neural_network_model()
-    accuracy <- mean(nn_model_info$predictions == nn_model_info$test$cardio    )
+    accuracy <- mean(nn_model_info$predictions == nn_model_info$test$cardio)
     paste0("Accuracy: ", round(accuracy * 100, 2), "%")
   })
 
@@ -1566,4 +1577,5 @@ server <- function(input, output, session) {
 
 # Create and run the Shiny app
 shinyApp(ui = ui, server = server)
+
 
