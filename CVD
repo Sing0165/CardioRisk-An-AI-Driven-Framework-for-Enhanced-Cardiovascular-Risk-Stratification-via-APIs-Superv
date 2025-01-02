@@ -16,6 +16,7 @@ library(DT)           # For DataTables
 library(nnet)         # For Neural Network
 library(reshape2)     # For reshaping data
 library(GGally)       # For ggpairs
+library(Rtsne)        # For t-SNE
 
 generateContent <- function(prompt, api_key) {
   headers <- c(`Content-Type` = "application/json")
@@ -88,6 +89,7 @@ rownames(rf_cm) <- c("Reference 0", "Reference 1")
 # Function to generate confusion matrix plot with a specific color palette
 create_cm_plot <- function(cm_data, model_name) {
   cm_df <- melt(cm_data)
+  
   color_scheme <- switch(model_name,
                          "Naive Bayes" = scale_fill_gradient(low = "lightyellow", high = "darkorange"),
                          "Logistic Regression" = scale_fill_gradient(low = "white", high = "blue"),
@@ -119,6 +121,7 @@ ui <- dashboardPage(
       menuItem("Home", tabName = "home", icon = icon("hospital")),
       menuItem("Descriptive Analytics", tabName = "Descriptiveanalytics", icon = icon("chart-bar")),
       menuItem("Pair Plot", tabName = "pair_plot", icon = icon("table")),  # Added Pair Plot menu item
+      menuItem("t-SNE Visualization", tabName = "tsne_visualization", icon = icon("project-diagram")),  # Added t-SNE menu item
       menuItem("Logistic Regression Model", tabName = "logistic_model", icon = icon("cogs")),
       menuItem("Feature Importance", tabName = "feature_importance", icon = icon("chart-bar")),
       menuItem("Decision Tree", tabName = "decision_tree", icon = icon("tree")),
@@ -208,6 +211,15 @@ ui <- dashboardPage(
                 box(title = "Density Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("density", height = "300px"))
               )
       ),
+     # t-SNE Visualization Tab
+      tabItem(tabName = "tsne_visualization",
+              fluidRow(
+                box(title = "t-SNE Visualization", status = "primary", solidHeader = TRUE,
+                    actionButton("run_tsne", "Run t-SNE"),
+                    plotOutput("tsne_plot", height = "600px"))
+              )
+      ),
+  
       # Pair Plot Tab
       tabItem(tabName = "pair_plot",
               fluidRow(
@@ -867,6 +879,22 @@ server <- function(input, output, session) {
       theme_minimal() +
       geom_point()
   })
+
+ # t-SNE Visualization
+  output$tsne_plot <- renderPlot({
+    set.seed(123)  # For reproducibility
+    tsne_result <- Rtsne(dfCardio[, -1], dims = 2, pca = TRUE, verbose = TRUE, check_duplicates = FALSE)
+    
+    tsne_data <- as.data.frame(tsne_result$Y)
+    colnames(tsne_data) <- c("Dim1", "Dim2")
+    tsne_data$cardio <- dfCardio$cardio
+    
+    ggplot(tsne_data, aes(x = Dim1, y = Dim2, color = factor(cardio))) +
+      geom_point(size = 1.5, alpha = 0.7) +
+      theme_minimal() +
+      labs(title = "t-SNE Visualization", x = "t-SNE Dimension 1", y = "t-SNE Dimension 2", color = "CVD Status")
+  })
+
 
   # Decision Tree Model
   decision_tree_model <- reactive({
@@ -1577,5 +1605,3 @@ server <- function(input, output, session) {
 
 # Create and run the Shiny app
 shinyApp(ui = ui, server = server)
-
-
