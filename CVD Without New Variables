@@ -1,0 +1,1557 @@
+# Load Required Libraries
+library(httr)
+library(shiny)
+library(shinydashboard)
+library(caret)
+library(ggplot2)
+library(dplyr)
+library(pROC)
+library(shinyjs)
+library(rpart)
+library(randomForest)  # For Random Forest
+library(class)         # For KNN
+library(e1071)        # For Naive Bayes
+library(cluster)      # For clustering algorithms
+library(DT)           # For DataTables
+library(nnet)         # For Neural Network
+library(reshape2)     # For reshaping data
+library(GGally)       # For ggpairs
+library(Rtsne)        # For t-SNE
+library(igraph)       # For network visualizations
+
+generateContent <- function(prompt, api_key) {
+  headers <- c(`Content-Type` = "application/json")
+  params <- list(`key` = api_key)
+  data <- sprintf('{"contents": [{"parts":[{"text": "%s"}]}]}', prompt)
+  res <- httr::POST(
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+    httr::add_headers(.headers = headers),
+    query = params,
+    body = data
+  )
+  return(content(res)$candidates[[1]]$content$parts[[1]]$text)
+}
+
+# Load and preprocess data
+dfCardio <- dfCardio[-c(1)]
+dfCardio$age <- dfCardio$age / 365
+
+dfCardio$gender[dfCardio$gender == 1] <- 0  # women
+dfCardio$gender[dfCardio$gender == 2] <- 1  # men 
+
+# Remove outliers and preprocess
+dfCardio <- dfCardio[dfCardio$ap_lo <= 200 & dfCardio$ap_lo >= 30, ]
+dfCardio <- dfCardio[dfCardio$ap_hi <= 260 & dfCardio$ap_hi >= 50, ]
+
+# Coerce column types
+colnames_df <- as.vector(colnames(dfCardio))
+numeric_vars <- c("age", "height", "weight", "ap_hi", "ap_lo")
+categorical_vars <- colnames_df[!colnames_df %in% numeric_vars]
+dfCardio[categorical_vars] <- lapply(dfCardio[categorical_vars], as.factor)
+dfCardio[numeric_vars] <- lapply(dfCardio[numeric_vars], as.numeric)
+
+# Specify dummy variable coding
+dummies <- dummyVars(cardio ~ ., data = dfCardio)
+ex <- data.frame(predict(dummies, newdata = dfCardio))
+names(ex) <- gsub("\\.", "", names(ex))
+dfCardio <- cbind(dfCardio$cardio, ex)
+names(dfCardio)[1] <- "cardio"
+
+# Check for linear combinations
+cardio <- dfCardio$cardio
+dfCardio <- cbind(rep(1, nrow(dfCardio)), dfCardio[2:ncol(dfCardio)])
+names(dfCardio)[1] <- "ones"
+comboInfo <- findLinearCombos(dfCardio)
+dfCardio <- dfCardio[, -comboInfo$remove]
+dfCardio <- dfCardio[, c(2:ncol(dfCardio))]
+dfCardio <- cbind(cardio, dfCardio)
+
+# Remove features with near-zero variance
+nzv <- nearZeroVar(dfCardio, saveMetrics = TRUE)
+dfCardio <- dfCardio[, c(TRUE, !nzv$zeroVar[2:ncol(dfCardio)])]
+
+# Define the confusion matrices for the selected models
+nb_cm <- matrix(c(5422, 1526, 2087, 4721), nrow = 2, byrow = TRUE)
+colnames(nb_cm) <- c("Prediction 0", "Prediction 1")
+rownames(nb_cm) <- c("Reference 0", "Reference 1")
+
+lg_cm <- matrix(c(5468, 1480, 2199, 4609), nrow = 2, byrow = TRUE)
+colnames(lg_cm) <- c("Prediction 0", "Prediction 1")
+rownames(lg_cm) <- c("Reference 0", "Reference 1")
+
+nn_cm <- matrix(c(5422, 1526, 2087, 4721), nrow = 2, byrow = TRUE)
+colnames(nn_cm) <- c("Prediction 0", "Prediction 1")
+rownames(nn_cm) <- c("Reference 0", "Reference 1")
+
+rf_cm <- matrix(c(5429, 1519, 2124, 4684), nrow = 2, byrow = TRUE)
+colnames(rf_cm) <- c("Prediction 0", "Prediction 1")
+rownames(rf_cm) <- c("Reference 0", "Reference 1")
+
+# Function to generate confusion matrix plot with a specific color palette
+create_cm_plot <- function(cm_data, model_name) {
+  cm_df <- melt(cm_data)
+  
+  color_scheme <- switch(model_name,
+                         "Naive Bayes" = scale_fill_gradient(low = "lightyellow", high = "darkorange"),
+                         "Logistic Regression" = scale_fill_gradient(low = "white", high = "blue"),
+                         "Neural Network" = scale_fill_gradient(low = "lightgreen", high = "darkgreen"),
+                         "Random Forest" = scale_fill_gradient(low = "lightpink", high = "red"))
+  
+  ggplot(cm_df, aes(x = Var2, y = Var1, fill = value)) +
+    geom_tile(color = "white") +
+    color_scheme +
+    geom_text(aes(label = value), color = "black", size = 6) +
+    theme_minimal() +
+    theme(
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.text.x = element_text(size = 14),
+      axis.text.y = element_text(size = 14),
+      plot.title = element_text(size = 16, hjust = 0.5)
+    ) +
+    labs(title = paste(model_name, "Confusion Matrix")) +
+    coord_fixed(ratio = 1)
+}
+
+# Create UI for the dashboard
+ui <- dashboardPage(
+  title = 'Cardiovascular Disease Prediction Dashboard',
+  dashboardHeader(title = "CVD Prediction Dashboard", titleWidth = 350),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Home", tabName = "home", icon = icon("hospital")),
+      menuItem("Descriptive Analytics", tabName = "Descriptiveanalytics", icon = icon("chart-bar")),
+      menuItem("Pair Plot", tabName = "pair_plot", icon = icon("table")),  # Added Pair Plot menu item
+      menuItem("t-SNE Visualization", tabName = "tsne_visualization", icon = icon("project-diagram")),  # Added t-SNE menu item
+      menuItem("Logistic Regression Model", tabName = "logistic_model", icon = icon("cogs")),
+      menuItem("Feature Importance", tabName = "feature_importance", icon = icon("chart-bar")),
+      menuItem("Decision Tree", tabName = "decision_tree", icon = icon("tree")),
+      menuItem("Random Forest Model", tabName = "random_forest", icon = icon("cogs")),
+      menuItem("KNN Model", tabName = "knn_model", icon = icon("cogs")),
+      menuItem("Naive Bayes Model", tabName = "naive_bayes_model", icon = icon("cogs")),
+      menuItem("Neural Network Model", tabName = "neural_network_model", icon = icon("cogs")),
+      menuItem("Statistical Tests", tabName = "statistical_tests", icon = icon("calculator")),
+      menuItem("Model Comparison", tabName = "model_comparison", icon = icon("chart-bar")),
+      menuItem("Performance Comparison", tabName = "performance_comparison", icon = icon("chart-pie")),
+      menuItem("K-Means Clustering", tabName = "kmeans_clustering", icon = icon("cluster")),
+      menuItem("Hierarchical Clustering", tabName = "hierarchical_clustering", icon = icon("project-diagram")),
+      menuItem("Dimensionality Reduction", tabName = "DimensionalityReduction", icon = icon("compress-arrows-alt")),
+      menuItem("Predict", tabName = "predict", icon = icon("heartbeat")),
+      menuItem("Recommendations", tabName = "recommendations", icon = icon("book")),
+      menuItem("Chatbot", tabName = "chatbot", icon = icon("comments")),
+      menuItem("ML Metrics", tabName = "ml_metrics", icon = icon("chart-line")),  # Added ML Metrics menu item
+      menuItem("Model Accuracies Comparison", tabName = "model_accuracies_comparison", icon = icon("chart-line")),
+      menuItem("Confusion Matrices", tabName = "confusion_matrices", icon = icon("table")),
+      menuItem("Advanced Confusion Matrices", tabName = "advanced_confusion_matrices", icon = icon("table")),
+      menuItem("Bivariate Analysis", tabName = "bivariate_analysis", icon = icon("chart-bar")),
+      menuItem("Violin Plot Bivariate", tabName = "violin_plot_bivariate", icon = icon("chart-bar")),
+      menuItem("Density Plot Bivariate", tabName = "density_plot_bivariate", icon = icon("chart-bar")),
+      menuItem("Scatter Plot Bivariate", tabName = "scatter_plot_bivariate", icon = icon("chart-bar")),
+      menuItem("Correlation Plot", tabName = "correlation_plot", icon = icon("table"))
+    )
+  ),
+  dashboardBody(
+    useShinyjs(),
+    tags$style(HTML("
+      body { background-color: #b04a5e; font-family: 'Times New Roman', serif; color: #333333; font-size: 18px; }
+      .navbar { background-color: #ffffff; }
+      .navbar a { color: #333333 !important; }
+      .container { background-color: rgba(255, 255, 255, 0.9); border-radius: 10px; padding: 25px; box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3); color: #343a40; }
+      h1, h3, h4 { color: #000000; text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3); font-size: 22px; }
+      .btn { width: 100%; margin: 10px 0; font-size: 16px; border-radius: 25px; background-color: #841617; color: #ffffff; border: none; padding: 10px; transition: background 0.3s ease; }
+      .btn:hover { background-color: #6f1417; }
+      .bubble-title { text-align: center; background-color: #841617; color: #ffffff; border-radius: 25px; padding: 10px 20px; font-size: 24px; margin-bottom: 20px; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3); }
+      .rect-bubble { background-color: #f9c74f; border-radius: 10px; padding: 15px; margin: 10px 0; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); }
+      .research-overview-bubble { border-radius: 20px; padding: 20px; background-color: rgba(255, 255, 255, 0.95); box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+    ")),
+    tabItems(
+      # Home Tab
+      tabItem(tabName = "home",
+              tags$div(class = "bubble-title", "Heart Sentinel: Machine Learning in Cardiovascular Diseases"),
+              fluidRow(
+                column(width = 12, tags$div(class = "research-overview-bubble", 
+                                             tags$h2("Research Overview"),
+                                             tags$p("Heart disease continues to be a pervasive issue globally, accounting for a disproportionate amount of mortality rates. The urgency of reliable and timely diagnostic tools is clearer than ever, prompting this research aimed at leveraging machine learning algorithms to predict heart disease."),
+                                             tags$p("This project utilizes a modified version of the UCI Heart Disease repository, employing various patient attributes such as age, sex, and medical history to develop predictive models."),
+                                             tags$p("By focusing on a systematic methodology encompassing data preprocessing, algorithm selection, and model evaluation, this research aspires to enhance diagnostic precision and improve patient outcomes."),
+                                             tags$p("This article documents the intricate steps taken throughout this study, discusses the results obtained using machine learning techniques, and highlights the biases, limitations, and potential directions for further research."),
+                                             actionButton("next_to_descriptive", "Next", class = "btn")
+                ))
+              ),
+              fluidRow(
+                valueBox("86 million", "People affected by CVD", icon = icon("user-md"), color = "red"),
+                valueBox("17.9 million", "Annual deaths from CVD", icon = icon("skull-crossbones"), color = "orange"),
+                valueBox("32%", "Percentage of global deaths due to CVD", icon = icon("heart"), color = "purple")
+              ),
+              fluidRow(
+                column(width = 12, imageOutput("image_display"))
+              )
+      ),
+      # Descriptive Analytics Tab
+      tabItem(tabName = "Descriptiveanalytics",
+              fluidRow(
+                box(
+                  title = "Select Variables for Graphs",
+                  status = "primary",
+                  solidHeader = TRUE,
+                  selectInput('hist_x', "Choose a variable for histogram:", names(dfCardio_raw_num), selected = names(dfCardio_raw_num)[[1]]),
+                  sliderInput("binCount", "Bins for histogram", min = 1, max = 30, value = 10),
+                  selectInput('bar_x', label = "Choose a variable for Bar chart:", names(dfCardio_raw_cate), selected = names(dfCardio_raw_cate)[[1]]),
+                  selectInput('bar_fill', label = "Choose a fill variable for Bar chart:", names(dfCardio_raw_cate), selected = names(dfCardio_raw_cate)[[1]]),
+                  selectInput('box_x', label = "X axis of Box Plot:", names(dfCardio_raw_cate), selected = names(dfCardio_raw_cate)[[1]]),
+                  selectInput('box_y', label = "Y axis of Box Plot:", names(dfCardio_raw_num), selected = names(dfCardio_raw_num)[[1]]),
+                  selectInput('scatter_x', label = "X axis of Scatter Plot:", names(dfCardio_raw_num), selected = names(dfCardio_raw_num)[[2]]),
+                  selectInput('scatter_y', label = "Y axis of Scatter Plot:", names(dfCardio_raw_num), selected = names(dfCardio_raw_num)[[1]]),
+                  actionButton(inputId = "click", label = "Generate Graph", class = "btn-primary"),
+                  actionButton("next_to_model", "Next", class = "btn")
+                ),
+                box(title = "Histogram", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("hist", height = "300px")),
+                box(title = "Bar Chart Fill", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("bar_fill", height = "300px")),
+                box(title = "Box Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("box", height = "300px")),
+                box(title = "Scatter Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("scatter", height = "300px")),
+                box(title = "Violin Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("violin", height = "300px")),
+                box(title = "Density Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("density", height = "300px"))
+              )
+      ),
+      # t-SNE Visualization Tab
+      tabItem(tabName = "tsne_visualization",
+              fluidRow(
+                box(title = "t-SNE Visualization", status = "primary", solidHeader = TRUE,
+                    actionButton("run_tsne", "Run t-SNE"),
+                    plotOutput("tsne_plot", height = "600px"))
+              )
+      ),
+  
+      # Pair Plot Tab
+      tabItem(tabName = "pair_plot",
+              fluidRow(
+                box(title = "Scatter Plot Matrix", status = "primary", solidHeader = TRUE, 
+                    plotOutput("scatter_plot_matrix", height = "600px"))
+              )
+      ),
+      # New Bivariate Analysis Tabs
+      # Back-to-back Histogram Tab
+      tabItem(tabName = "bivariate_analysis",
+              fluidRow(
+                box(title = "Back-to-Back Histograms", status = "primary", solidHeader = TRUE,
+                    selectInput("var1_hist", "Choose Variable 1:", names(dfCardio_raw_num)),
+                    selectInput("var2_hist", "Choose Variable 2:", names(dfCardio_raw_num)),
+                    plotOutput("back_to_back_histograms")
+                )
+              )
+      ),
+      # Violin Plot Bivariate Analysis Tab
+      tabItem(tabName = "violin_plot_bivariate",
+              fluidRow(
+                box(title = "Violin Plot Bivariate Analysis", status = "primary", solidHeader = TRUE,
+                    selectInput("var1_violin", "Choose Variable 1:", names(dfCardio_raw_num)),
+                    selectInput("var2_violin", "Choose Variable 2:", names(dfCardio_raw_cate)),
+                    plotOutput("violin_plot")
+                )
+              )
+      ),
+      # Density Plot Bivariate Analysis Tab
+      tabItem(tabName = "density_plot_bivariate",
+              fluidRow(
+                box(title = "Density Plot Bivariate Analysis", status = "primary", solidHeader = TRUE,
+                    selectInput("var1_density", "Choose Variable 1:", names(dfCardio_raw_num)),
+                    selectInput("var2_density", "Choose Variable 2:", names(dfCardio_raw_cate)),
+                    plotOutput("density_plot")
+                )
+              )
+      ),
+      # Scatter Plot Bivariate Analysis Tab
+      tabItem(tabName = "scatter_plot_bivariate",
+              fluidRow(
+                box(title = "Scatter Plot Bivariate Analysis", status = "primary", solidHeader = TRUE,
+                    selectInput("x_scatter", "Choose X Variable:", names(dfCardio_raw_num)),
+                    selectInput("y_scatter", "Choose Y Variable:", names(dfCardio_raw_num)),
+                    plotOutput("scatter_plot")
+                )
+              )
+      ),
+      # Correlation Plot Tab
+      tabItem(tabName = "correlation_plot",
+              fluidRow(
+                box(title = "Correlation Plot", status = "primary", solidHeader = TRUE,
+                    plotOutput("correlation_matrix_plot")
+                )
+              )
+      ),
+      # Logistic Regression Model Tab
+      tabItem(tabName = "logistic_model",
+              fluidRow(
+                box(title = "Model Variables Coefficients", status = "primary", solidHeader = TRUE, verbatimTextOutput("linear_co")),
+                box(title = "Model Coefficients P-values", status = "primary", solidHeader = TRUE, verbatimTextOutput("linear_coP")),
+                box(title = "Logistic Regression Summary", status = "primary", solidHeader = TRUE, verbatimTextOutput("sumlm")),
+                box(title = "Model Accuracy", status = "primary", solidHeader = TRUE, verbatimTextOutput("accuracy")),
+                box(title = "Confusion Matrix", status = "primary", solidHeader = TRUE, verbatimTextOutput("confusion")),
+                box(title = "Specificity", status = "success", solidHeader = TRUE, verbatimTextOutput("specificity")),
+                box(title = "Matthews Correlation Coefficient (MCC)", status = "success", solidHeader = TRUE, verbatimTextOutput("mcc")),
+                box(title = "Cohen's Kappa", status = "success", solidHeader = TRUE, verbatimTextOutput("kappa")),
+                box(title = "Correlation Matrix", status = "primary", solidHeader = TRUE, plotOutput("correlation_matrix", height = "400px")),
+                box(title = "ROC Curve", status = "primary", solidHeader = TRUE, plotOutput("roc_plot_lr", height = "300px")),
+                box(title = "AUC Curve", status = "primary", solidHeader = TRUE, plotOutput("auc_plot_lr", height = "300px")),
+                box(title = "Model Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("metrics")),
+                actionButton("next_to_decision_tree", "Next", class = "btn")
+              )
+      ),
+      # Feature Importance Tab for Logistic Regression and other models
+      tabItem(tabName = "feature_importance",
+              fluidRow(
+                box(title = "Feature Importance for Logistic Regression", status = "primary", solidHeader = TRUE, plotOutput("feature_importance_plot_lr", height = "400px")),
+                box(title = "Feature Importance for Random Forest", status = "primary", solidHeader = TRUE, plotOutput("feature_importance_plot_rf", height = "400px")),
+                box(title = "Feature Importance for Decision Tree", status = "primary", solidHeader = TRUE, plotOutput("feature_importance_plot_dt", height = "400px")),
+                box(title = "Feature Importance for KNN", status = "primary", solidHeader = TRUE, plotOutput("feature_importance_plot_knn", height = "400px")),
+                box(title = "Feature Importance for Naive Bayes", status = "primary", solidHeader = TRUE, plotOutput("feature_importance_plot_nb", height = "400px"))
+              )
+      ),
+      # Decision Tree Tab
+      tabItem(tabName = "decision_tree",
+              fluidRow(
+                box(title = "Decision Tree Visualization", status = "primary", solidHeader = TRUE, plotOutput("tree_plot", height = "400px")),
+                box(title = "Decision Tree Summary", status = "primary", solidHeader = TRUE, verbatimTextOutput("tree_summary")),
+                box(title = "Decision Tree Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("tree_metrics")),
+                box(title = "ROC Curve", status = "primary", solidHeader = TRUE, plotOutput("roc_plot_dt", height = "300px")),
+                box(title = "AUC Curve", status = "primary", solidHeader = TRUE, plotOutput("auc_plot_dt", height = "300px")),
+                actionButton("next_to_random_forest", "Next", class = "btn")
+              )
+      ),
+      # Random Forest Model Tab
+      tabItem(tabName = "random_forest",
+              fluidRow(
+                box(title = "Random Forest Model Summary", status = "primary", solidHeader = TRUE, verbatimTextOutput("rf_summary")),
+                box(title = "Random Forest Model Accuracy", status = "primary", solidHeader = TRUE, verbatimTextOutput("rf_accuracy")),
+                box(title = "Random Forest Confusion Matrix", status = "primary", solidHeader = TRUE, verbatimTextOutput("rf_confusion")),
+                box(title = "Random Forest Specificity", status = "success", solidHeader = TRUE, verbatimTextOutput("rf_specificity")),
+                box(title = "Random Forest MCC", status = "success", solidHeader = TRUE, verbatimTextOutput("rf_mcc")),
+                box(title = "Random Forest Kappa", status = "success", solidHeader = TRUE, verbatimTextOutput("rf_kappa")),
+                box(title = "Random Forest Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("rf_metrics")),
+                box(title = "ROC Curve", status = "primary", solidHeader = TRUE, plotOutput("roc_plot_rf", height = "300px")),
+                box(title = "AUC Curve", status = "primary", solidHeader = TRUE, plotOutput("auc_plot_rf", height = "300px")),
+                actionButton("next_to_knn", "Next", class = "btn")
+              )
+      ),
+      # KNN Model Tab
+      tabItem(tabName = "knn_model",
+              fluidRow(
+                box(title = "KNN Model Accuracy", status = "primary", solidHeader = TRUE, verbatimTextOutput("knn_accuracy")),
+                box(title = "KNN Confusion Matrix", status = "primary", solidHeader = TRUE, verbatimTextOutput("knn_confusion")),
+                box(title = "KNN Specificity", status = "success", solidHeader = TRUE, verbatimTextOutput("knn_specificity")),
+                box(title = "KNN MCC", status = "success", solidHeader = TRUE, verbatimTextOutput("knn_mcc")),
+                box(title = "KNN Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("knn_metrics")),
+                actionButton("next_to_naive_bayes", "Next", class = "btn")
+              )
+      ),
+      # Naive Bayes Model Tab
+      tabItem(tabName = "naive_bayes_model",
+              fluidRow(
+                box(title = "Naive Bayes Model Accuracy", status = "primary", solidHeader = TRUE, verbatimTextOutput("nb_accuracy")),
+                box(title = "Naive Bayes Confusion Matrix", status = "primary", solidHeader = TRUE, verbatimTextOutput("nb_confusion")),
+                box(title = "Naive Bayes Specificity", status = "success", solidHeader = TRUE, verbatimTextOutput("nb_specificity")),
+                box(title = "Naive Bayes MCC", status = "success", solidHeader = TRUE, verbatimTextOutput("nb_mcc")),
+                box(title = "Naive Bayes Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("nb_metrics")),
+                actionButton("next_to_neural_network", "Next", class = "btn")  # Next button to Neural Network
+              )
+      ),
+      # Neural Network Model Tab
+      tabItem(tabName = "neural_network_model",
+              fluidRow(
+                box(title = "Neural Network Model Summary", status = "primary", solidHeader = TRUE, verbatimTextOutput("nn_summary")),
+                box(title = "Neural Network Accuracy", status = "primary", solidHeader = TRUE, verbatimTextOutput("nn_accuracy")),
+                box(title = "Neural Network Confusion Matrix", status = "primary", solidHeader = TRUE, verbatimTextOutput("nn_confusion")),
+                box(title = "Neural Network Specificity", status = "success", solidHeader = TRUE, verbatimTextOutput("nn_specificity")),
+                box(title = "Neural Network MCC", status = "success", solidHeader = TRUE, verbatimTextOutput("nn_mcc")),
+                box(title = "Neural Network Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("nn_metrics")),
+                actionButton("next_to_model_comparison", "Next", class = "btn")
+              )
+      ),
+      # Statistical Tests Tab
+      tabItem(tabName = "statistical_tests",
+              fluidRow(
+                box(title = "Chi-Squared Test", status = "primary", solidHeader = TRUE, 
+                    actionButton("run_chisq_test", "Run Chi-Squared Test"),
+                    verbatimTextOutput("chisq_result")),
+                box(title = "T-Tests", status = "primary", solidHeader = TRUE,
+                    actionButton("run_t_test", "Run T-Test"),
+                    verbatimTextOutput("t_test_result")),
+                box(title = "ANOVA", status = "primary", solidHeader = TRUE,
+                    actionButton("run_anova_test", "Run ANOVA"),
+                    verbatimTextOutput("anova_result")),
+                box(title = "Mann-Whitney U Test", status = "primary", solidHeader = TRUE,
+                    actionButton("run_mann_whitney", "Run Mann-Whitney U Test"),
+                    verbatimTextOutput("mann_whitney_result")),
+                box(title = "Kruskal-Wallis Test", status = "primary", solidHeader = TRUE,
+                    actionButton("run_kruskal_test", "Run Kruskal-Wallis Test"),
+                    verbatimTextOutput("kruskal_result")),
+                box(title = "Kolmogorov-Smirnov Test", status = "primary", solidHeader = TRUE,
+                    actionButton("run_ks_test", "Run Kolmogorov-Smirnov Test"),
+                    verbatimTextOutput("ks_result"))
+              )
+      ),
+      # Model Comparison Tab
+      tabItem(tabName = "model_comparison",
+              fluidRow(
+                box(title = "Model Comparison Metrics", status = "primary", solidHeader = TRUE, plotOutput("comparison_plot", height = "400px")),
+                box(title = "Model Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("model_metrics")),
+                box(title = "Model Performance Overview", status = "primary", solidHeader = TRUE, plotOutput("pie_chart", height = "400px"))
+              )
+      ),
+      # ML Metrics Tab
+      tabItem(tabName = "ml_metrics",
+              fluidRow(
+                box(title = "F1 Score", status = "primary", solidHeader = TRUE, plotOutput("f1_score_plot")),
+                box(title = "Recall", status = "primary", solidHeader = TRUE, plotOutput("recall_plot")),
+                box(title = "Precision", status = "primary", solidHeader = TRUE, plotOutput("precision_plot")),
+                box(title = "Accuracy", status = "primary", solidHeader = TRUE, plotOutput("accuracy_plot"))
+              )
+      ),
+      # Model Accuracies Comparison Tab
+      tabItem(tabName = "model_accuracies_comparison",
+              fluidRow(
+                box(title = "Model Accuracies Comparison", status = "primary", solidHeader = TRUE, plotOutput("accuracies_comparison_plot", height = "400px"))
+              )
+      ),
+      # Performance Comparison Tab
+      tabItem(tabName = "performance_comparison",
+              fluidRow(
+                box(
+                  title = "Performance Comparison of Models",
+                  status = "primary",
+                  solidHeader = TRUE,
+                  dataTableOutput("performance_table")
+                )
+              )
+      ),
+      # K-Means Clustering Tab
+      tabItem(tabName = "kmeans_clustering",
+              fluidRow(
+                box(title = "K-Means Clustering Visualization", status = "primary", solidHeader = TRUE, plotOutput("kmeans_plot", height = "400px")),
+                box(title = "K-Means Summary", status = "primary", solidHeader = TRUE, verbatimTextOutput("kmeans_summary")),
+                box(title = "Elbow Method Plot", status = "primary", solidHeader = TRUE, plotOutput("elbow_plot", height = "300px"))
+              )
+      ),
+      # Hierarchical Clustering Tab
+      tabItem(tabName = "hierarchical_clustering",
+              fluidRow(
+                box(title = "Hierarchical Clustering Dendrogram", status = "primary", solidHeader = TRUE, plotOutput("hclust_plot", height = "400px")),
+                box(title = "Hierarchical Clustering Summary", status = "primary", solidHeader = TRUE, verbatimTextOutput("hclust_summary"))
+              )
+      ),
+      # Dimensionality Reduction Tab
+      tabItem(tabName = "DimensionalityReduction",
+              fluidRow(
+                box(title = "PCA Visualization", status = "primary", solidHeader = TRUE, plotOutput("pca_plot", height = "400px")),
+                box(title = "PCA Summary", status = "primary", solidHeader = TRUE, verbatimTextOutput("pca_summary")),
+                box(title = "PCA Variance Explained", status = "primary", solidHeader = TRUE, plotOutput("pca_variance_plot", height = "300px"))
+              )
+      ),
+      # Predict Tab
+      tabItem(tabName = "predict",
+              fluidRow(
+                box(
+                  title = "Input Data for Prediction",
+                  status = "primary",
+                  solidHeader = TRUE,
+                  div(class = "input-row",
+                      div(class = "input-column", numericInput("age", label = "Age (Years):", 50, min = 1, max = 150)),
+                      div(class = "input-column", selectInput("gender", label = "Gender (0:women, 1:men):", choices = list("0" = 0, "1" = 1), selected = 0)),
+                      div(class = "input-column", numericInput("height", label = "Height (cm):", 160, min = 50, max = 250)),
+                      div(class = "input-column", numericInput("weight", label = "Weight (kg):", 70, min = 3, max = 600)),
+                      div(class = "input-column", numericInput("ap_hi", label = "Systolic Blood Pressure:", 140, min = 60, max = 260)),
+                      div(class = "input-column", numericInput("ap_lo", label = "Diastolic Blood Pressure:", 90, min = 30, max = 210)),
+                      div(class = "input-column", selectInput("cholesterol", label = "Cholesterol (1:normal, 2:above normal, 3:well above normal):", choices = list("1" = 1, "2" = 2, "3" = 3), selected = 1)),
+                      div(class = "input-column", selectInput("gluc", label = "Glucose (1:normal, 2:above normal, 3:well above normal):", choices = list("1" = 1, "2" = 2, "3" = 3), selected = 1)),
+                      div(class = "input-column", selectInput("smoke", label = "Smoke or Not (0: No, 1: Yes):", choices = list("0" = 0, "1" = 1), selected = 0)),
+                      div(class = "input-column", selectInput("alcohol", label = "Alcohol Intake (0: No, 1: Yes):", choices = list("0" = 0, "1" = 1), selected = 0)),
+                      div(class = "input-column", selectInput("active", label = "Physical Activity (0: No, 1: Yes):", choices = list("0" = 0, "1" = 1), selected = 0))
+                  ),
+                  actionButton(inputId = "pred", label = "Predict CVD Risk", class = "btn-danger")
+                ),
+                infoBoxOutput("PredictBox", width = 12)
+              )
+      ),
+      # Recommendations Tab
+      tabItem(tabName = "recommendations",
+              fluidRow(
+                box(
+                  title = "CVD Prediction Results",
+                  status = "primary",
+                  solidHeader = TRUE,
+                  verbatimTextOutput("cvd_advice")
+                )
+              )
+      ),
+      # Chatbot Tab
+      tabItem(tabName = "chatbot",
+              fluidRow(
+                box(
+                  title = "Chatbot",
+                  status = "primary",
+                  solidHeader = TRUE,
+                  textInput("userInput", "Type your message:", ""),
+                  actionButton("generateBtn", "Send", class = "btn-primary"),
+                  dataTableOutput("chatOutput"),
+                  tags$style(HTML("
+                    #chatOutput { height: 400px; }
+                  "))
+                )
+              )
+      ),
+      # Confusion Matrices Tab
+      tabItem(tabName = "confusion_matrices",
+              fluidRow(
+                box(title = "Logistic Regression Confusion Matrix", status = "primary", solidHeader = TRUE, 
+                    verbatimTextOutput("confusion_lr")),
+                box(title = "Decision Tree Confusion Matrix", status = "primary", solidHeader = TRUE, 
+                    verbatimTextOutput("confusion_dt")),
+                box(title = "Random Forest Confusion Matrix", status = "primary", solidHeader = TRUE, 
+                    verbatimTextOutput("confusion_rf")),
+                box(title = "KNN Confusion Matrix", status = "primary", solidHeader = TRUE, 
+                    verbatimTextOutput("confusion_knn")),
+                box(title = "Naive Bayes Confusion Matrix", status = "primary", solidHeader = TRUE, 
+                    verbatimTextOutput("confusion_nb")),
+                box(title = "Neural Network Confusion Matrix", status = "primary", solidHeader = TRUE, 
+                    verbatimTextOutput("confusion_nn")),
+                box(title = "Metrics", status = "info", solidHeader = TRUE,
+                    div("Logistic Regression:"),
+                    verbatimTextOutput("metrics_lr"),
+                    div("Decision Tree:"),
+                    verbatimTextOutput("metrics_dt"),
+                    div("Random Forest:"),
+                    verbatimTextOutput("metrics_rf"),
+                    div("KNN:"),
+                    verbatimTextOutput("metrics_knn"),
+                    div("Naive Bayes:"),
+                    verbatimTextOutput("metrics_nb"),
+                    div("Neural Network:"),
+                    verbatimTextOutput("metrics_nn")
+                )
+              )
+      ),
+      # Advanced Confusion Matrices Tab
+      tabItem(tabName = "advanced_confusion_matrices",
+              fluidPage(
+                titlePanel("Confusion Matrix Visualizations"),
+                sidebarLayout(
+                  sidebarPanel(
+                    # No input needed, just tabs to switch between models
+                  ),
+                  mainPanel(
+                    tabsetPanel(
+                      tabPanel("Naive Bayes",
+                               plotOutput("nb_plot"),
+                               p("Naive Bayes Confusion Matrix Details:"),
+                               p("The Naive Bayes confusion matrix represents the performance of a probabilistic classifier based on Bayes' Theorem. The matrix shows the counts of predicted versus actual values (true positives, true negatives, false positives, false negatives) for a binary classification task."),
+                               p("Breaking down the confusion matrix for Naive Bayes:"),
+                               p("True Negatives (TN): The model correctly predicted the negative class 5422 times (Reference 0 and predicted 0). This means that the model did a great job in predicting instances that truly belong to class 0."),
+                               p("False Positives (FP): The model incorrectly predicted class 1 instead of class 0, leading to 1526 false positives (Reference 0 but predicted 1). These are instances where the model mistakenly flagged a negative class as positive."),
+                               p("False Negatives (FN): The model incorrectly predicted class 0 for instances that actually belong to class 1, leading to 2087 false negatives (Reference 1 but predicted 0). This shows where the model failed to correctly identify positive instances."),
+                               p("True Positives (TP): The model correctly predicted the positive class 4721 times (Reference 1 and predicted 1). This indicates the model’s strength in identifying positive instances."),
+                               p("This matrix indicates that while Naive Bayes performs well in predicting class 0, it struggles with classifying class 1, as evidenced by the relatively higher false negatives.")),
+                      tabPanel("Logistic Regression",
+                               plotOutput("lg_plot"),
+                               p("Logistic Regression Confusion Matrix Details:"),
+                               p("Logistic Regression models the log-odds of the probability of a binary outcome. The confusion matrix here shows the true positives, false positives, true negatives, and false negatives for the Logistic Regression model."),
+                               p("Breaking down the confusion matrix for Logistic Regression:"),
+                               p("True Negatives (TN): The model correctly predicted the negative class 5468 times (Reference 0 and predicted 0). This shows the model's strong ability to classify negative instances correctly."),
+                               p("False Positives (FP): The model incorrectly predicted class 1 instead of class 0, leading to 1480 false positives (Reference 0 but predicted 1). These are instances where the model falsely flagged negatives as positives."),
+                               p("False Negatives (FN): The model incorrectly predicted class 0 for instances that actually belong to class 1, resulting in 2199 false negatives (Reference 1 but predicted 0). This indicates some misclassification of the positive class."),
+                               p("True Positives (TP): The model correctly predicted the positive class 4609 times (Reference 1 and predicted 1). This shows a good performance in correctly classifying positive instances."),
+                               p("This confusion matrix indicates that Logistic Regression is fairly balanced between classifying positives and negatives, but it still suffers from a moderate number of false positives and false negatives.")),
+                      tabPanel("Neural Network",
+                               plotOutput("nn_plot"),
+                               p("Neural Network Confusion Matrix Details:"),
+                               p("The Neural Network confusion matrix shows the model’s performance in a binary classification task. Neural networks are highly flexible models capable of capturing complex patterns."),
+                               p("Breaking down the confusion matrix for Neural Network:"),
+                               p("True Negatives (TN): The model correctly predicted the negative class 5422 times (Reference 0 and predicted 0). The model did a decent job in predicting instances that belong to class 0."),
+                               p("False Positives (FP): The model incorrectly predicted class 1 instead of class 0, resulting in 1526 false positives (Reference 0 but predicted 1). This suggests the model may be slightly overpredicting the positive class for some instances."),
+                               p("False Negatives (FN): The model incorrectly predicted class 0 for instances that actually belong to class 1, leading to 2087 false negatives (Reference 1 but predicted 0). These are cases where the model missed the positive class."),
+                               p("True Positives (TP): The model correctly predicted the positive class 4721 times (Reference 1 and predicted 1). This demonstrates the Neural Network's reasonable ability to identify positive instances."),
+                               p("This confusion matrix indicates that the Neural Network is performing relatively well but has room for improvement in correctly classifying negative cases and reducing false negatives.")),
+                      tabPanel("Random Forest",
+                               plotOutput("rf_plot"),
+                               p("Random Forest is an ensemble model that combines multiple decision trees. This confusion matrix visualizes the performance of the model in binary classification."),
+                               p("Breaking down the confusion matrix for Random Forest:"),
+                               p("True Negatives (TN): The model correctly predicted the negative class 5429 times (Reference 0 and predicted 0). This shows Random Forest's strength in correctly identifying class 0 instances."),
+                               p("False Positives (FP): The model incorrectly predicted class 1 instead of class 0, leading to 1519 false positives (Reference 0 but predicted 1). These are cases where the model mistakenly predicted the positive class."),
+                               p("False Negatives (FN): The model misclassified class 0 as class 1 for 2124 instances (Reference 1 but predicted 0). This shows where the model missed positive instances."),
+                               p("True Positives (TP): The model correctly predicted the positive class 4684 times (Reference 1 and predicted 1). This demonstrates Random Forest's ability to predict positive cases correctly."),
+                               p("This confusion matrix shows that Random Forest performs relatively well across both classes, but it still has a noticeable number of false negatives and false positives."))
+                    )
+                  )
+                )
+              )
+      )
+    )
+  ),
+  skin = 'black'
+)
+
+server <- function(input, output, session) {
+  # Initialize reactive values for storing chat history
+  chat_history <- reactiveVal(data.frame(Role = character(0), Message = character(0), stringsAsFactors = FALSE))
+  prediction_percentage <- reactiveVal(NA)
+
+  # Initialize variables to avoid "undefined" errors
+  # These are the columns where you would set default values on initialization
+  if (!exists("gender")) {
+    gender <- 0  # Default gender
+  }
+  if (!exists("cholesterol")) {
+    cholesterol <- 1  # Default cholesterol
+  }
+  if (!exists("gluc")) {
+    gluc <- 1  # Default gluc
+  }
+  if (!exists("smoke")) {
+    smoke <- 0  # Default smoke
+  }
+  if (!exists("alcohol")) {
+    alcohol <- 0  # Default alcohol
+  }
+  if (!exists("active")) {
+    active <- 0  # Default active
+  }
+
+  # Ensure that input variables are updated correctly
+  hist_x <- eventReactive(input$click, { input$hist_x })
+  bar_x <- eventReactive(input$click, { input$bar_x })
+  binCount <- eventReactive(input$click, { input$binCount })
+  box_x <- eventReactive(input$click, { input$box_x })
+  box_y <- eventReactive(input$click, { input$box_y })
+  scatter_x <- eventReactive(input$click, { input$scatter_x })
+  scatter_y <- eventReactive(input$click, { input$scatter_y })
+  bar_fill_data <- eventReactive(input$click, { input$bar_fill })
+
+  output$image_display <- renderImage({
+    list(src = "Health1.png")  # Ensure the image path is correct
+  }, deleteFile = FALSE)
+
+  output$hist <- renderPlot({
+    ggplot(dfCardio_raw, aes_string(x = hist_x())) + 
+      geom_histogram(color = "skyblue", fill = "lightblue", binwidth = binCount())
+  })
+
+  output$bar_fill <- renderPlot({
+    ggplot(data = dfCardio_raw, aes_string(x = bar_x(), fill = bar_fill_data())) +
+      geom_bar(position = "fill") + scale_fill_brewer(palette = "Blues")
+  })
+
+  output$box <- renderPlot({
+    ggplot(data = dfCardio_raw, aes_string(x = box_x(), y = box_y())) +
+      geom_boxplot(color = "skyblue", fill = "lightblue")
+  })
+
+  output$scatter <- renderPlot({
+    progress <- Progress$new()
+    on.exit(progress$close())
+    progress$set(message = 'Making plot...', value = 0)
+    n <- 5
+    for (i in 1:n) {
+      progress$inc(1/n, detail = paste("Doing part", i))
+      Sys.sleep(0.1)
+    }
+    ggplot(data = dfCardio_raw, aes_string(x = scatter_x(), y = scatter_y())) +
+      geom_point(color = "skyblue")
+  })
+
+  output$violin <- renderPlot({
+    ggplot(data = dfCardio_raw, aes_string(x = box_x(), y = box_y())) + 
+      geom_violin(fill = "lightblue", color = "skyblue")
+  })
+
+  output$density <- renderPlot({
+    ggplot(dfCardio_raw, aes_string(x = hist_x())) + 
+      geom_density(fill = "lightblue", color = "darkblue", alpha = 0.5)
+  })
+
+  output$back_to_back_histograms <- renderPlot({
+    ggplot() +
+      geom_histogram(data = dfCardio[dfCardio$cardio == 0,], aes_string(x = input$var1_hist), 
+                     fill = "blue", alpha = 0.5, position = "identity", bins = 30) +
+      geom_histogram(data = dfCardio[dfCardio$cardio == 1,], aes_string(x = input$var2_hist), 
+                     fill = "red", alpha = 0.5, position = "identity", bins = 30) +
+      labs(title = "Back-to-Back Histograms", x = "Values", y = "Count") +
+      theme_minimal()
+  })
+
+  output$violin_plot <- renderPlot({
+    ggplot(dfCardio, aes_string(x = input$var2_violin, y = input$var1_violin)) +
+      geom_violin(fill = "lightblue") +
+      labs(title = "Violin Plot Bivariate Analysis", x = input$var2_violin, y = input$var1_violin) + 
+      theme_minimal()
+  })
+
+  output$density_plot <- renderPlot({
+    ggplot(dfCardio, aes_string(x = input$var1_density, fill = input$var2_density)) +
+      geom_density(alpha = 0.5) +
+      labs(title = "Density Plot Bivariate Analysis", x = input$var1_density, y = "Density") +
+      theme_minimal()
+  })
+  
+  output$scatter_plot <- renderPlot({
+    ggplot(dfCardio, aes_string(x = input$x_scatter, y = input$y_scatter)) +
+      geom_point(aes(color = cardio)) + 
+      labs(title = "Scatter Plot Bivariate Analysis", x = input$x_scatter, y = input$y_scatter) +
+      theme_minimal()
+  })
+
+  output$correlation_matrix_plot <- renderPlot({
+    correlation_vals <- cor(dfCardio[, numeric_vars])
+    melted_corr <- melt(correlation_vals)
+    ggplot(melted_corr, aes(Var1, Var2, fill = value)) +
+      geom_tile() + 
+      scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                           limit = c(-1, 1), name = "Correlation") + 
+      theme_minimal() +
+      labs(title = "Correlation Plot", x = "", y = "") +
+      theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust = 1))
+  })
+
+  output$scatter_plot_matrix <- renderPlot({
+    ggpairs(dfCardio[, numeric_vars], 
+            aes(color = factor(cardio), alpha = 0.5), 
+            title = "Scatter Plot Matrix") + 
+      theme_minimal()  
+  })
+
+  # Logistic Regression Model and Predictions
+  if (nrow(dfCardio) > 1) {
+    preProcValues <- preProcess(dfCardio[, 2:ncol(dfCardio)], method = c("range"))
+    dfCardio_new <- predict(preProcValues, dfCardio)
+    df <- na.omit(dfCardio_new)
+
+    set.seed(123)
+    training.samples <- df$cardio %>% createDataPartition(p = 0.8, list = FALSE)
+    train.data <- df[training.samples, ]
+    test.data <- df[-training.samples, ]
+
+    model <- glm(cardio ~ ., data = train.data, family = binomial)
+
+    output$sumlm <- renderPrint(summary(model))
+    output$linear_co <- renderPrint(summary(model)$coefficients[, 1])
+    output$linear_coP <- renderPrint(summary(model)$coefficients[, 4])
+
+    probabilities <- model %>% predict(test.data, type = "response")
+    predicted.classes <- ifelse(probabilities > 0.5, "1", "0")
+
+    output$accuracy <- renderText(paste0("Model Accuracy: ", round(mean(predicted.classes == test.data$cardio) * 100, 2), "%"));
+
+    # Confusion Matrix
+    output$confusion <- renderPrint(table(predicted.classes, test.data$cardio))
+
+    # Save confusion matrix metrics for later use
+    confusion_matrix_lr <- confusionMatrix(factor(predicted.classes), factor(test.data$cardio))
+    output$confusion_lr <- renderPrint(confusion_matrix_lr$table)
+    
+    output$metrics_lr <- renderPrint({
+      paste0("True Positive (TP): ", confusion_matrix_lr$table[2, 2], "\n",
+             "True Negative (TN): ", confusion_matrix_lr$table[1, 1], "\n",
+             "False Positive (FP): ", confusion_matrix_lr$table[1, 2], "\n",
+             "False Negative (FN): ", confusion_matrix_lr$table[2, 1])
+    })
+
+    # Calculate additional metrics
+    f1_score <- confusion_matrix_lr$byClass["F1"]
+    precision <- confusion_matrix_lr$byClass["Precision"]
+    recall <- confusion_matrix_lr$byClass["Recall"]
+    tn <- confusion_matrix_lr$table[1, 1]  # True Negative
+    fp <- confusion_matrix_lr$table[1, 2]  # False Positive
+    fn <- confusion_matrix_lr$table[2, 1]  # False Negative
+    tp <- confusion_matrix_lr$table[2, 2]  # True Positive
+
+    # Calculate specificity
+    specificity <- tn / (tn + fp)
+    output$specificity <- renderPrint(round(specificity, 2))
+
+    # Calculate MCC
+    mcc <- (tp * tn - fp * fn) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    output$mcc <- renderPrint(round(mcc, 2))
+
+    # Calculate Kappa
+    kappa <- confusion_matrix_lr$overall["Kappa"]
+    output$kappa <- renderPrint(round(kappa, 2))
+
+    output$metrics <- renderPrint({
+      paste0("F1 Score: ", round(f1_score, 2), "\n",
+             "Precision: ", round(precision, 2), "\n",
+             "Recall: ", round(recall, 2))
+    });
+
+    # Correlation Matrix
+    correlation_matrix <- cor(dfCardio[,-1])
+    output$correlation_matrix <- renderPlot({
+      heatmap(correlation_matrix, 
+              main = "Correlation Matrix", 
+              Colv = NA, Rowv = NA, 
+              scale = "column", 
+              col = colorRampPalette(c("blue", "white", "red"))(100))
+    })
+
+    # ROC Curve for Logistic Regression
+    roc_curve <- roc(test.data$cardio, probabilities)
+    output$roc_plot_lr <- renderPlot({
+      ggroc(roc_curve, alpha = 0.8, color = "blue") + 
+        ggtitle("ROC Curve - Logistic Regression") + 
+        xlab("False Positive Rate") +
+        ylab("True Positive Rate")
+    })
+
+    # AUC for Logistic Regression
+    auc_value <- auc(roc_curve)
+    output$auc_plot_lr <- renderPlot({
+      ggroc(roc_curve, alpha = 0.8, color = "blue") + 
+        annotate("text", x = 0.5, y = 0.5, label = paste("AUC =", round(auc_value, 2)), size = 5, color = "red") +
+        ggtitle("ROC Curve with AUC - Logistic Regression") + 
+        xlab("False Positive Rate") +
+        ylab("True Positive Rate")
+    })
+
+    output$PredictBox <- renderInfoBox({
+      # Preprocess input data
+      gender0 <- ifelse(input$gender == 0, 0, 1)
+      smoke0 <- ifelse(input$smoke == 0, 0, 1)
+      alco0 <- ifelse(input$alcohol == 0, 0, 1)
+      active0 <- ifelse(input$active == 0, 0, 1)
+
+      cholesterol1 <- ifelse(input$cholesterol == 1, 1, 0)
+      cholesterol2 <- ifelse(input$cholesterol == 2, 1, 0)
+
+      gluc1 <- ifelse(input$gluc == 1, 1, 0)
+      gluc2 <- ifelse(input$gluc == 2, 1, 0)
+
+      age <- (input$age - min(dfCardio$age)) / (max(dfCardio$age) - min(dfCardio$age))
+      height <- (input$height - min(dfCardio$height)) / (max(dfCardio$height) - min(dfCardio$height))
+      weight <- (input$weight - min(dfCardio$weight)) / (max(dfCardio$weight) - min(dfCardio$weight))
+      ap_hi <- (input$ap_hi - min(dfCardio$ap_hi)) / (max(dfCardio$ap_hi) - min(dfCardio$ap_hi))
+      ap_lo <- (input$ap_lo - min(dfCardio$ap_lo)) / (max(dfCardio$ap_lo) - min(dfCardio$ap_lo))
+
+      df_for_pred <- data.frame(age, gender0, height, weight, ap_hi, ap_lo, cholesterol1, cholesterol2, gluc1, gluc2, smoke0, alco0, active0)
+      predict_prob <- predict(model, df_for_pred, type = 'response')
+      predict_prob_hund <- round(predict_prob * 100, digits = 2)
+
+      prediction_percentage(predict_prob_hund)  # Update the reactive value with prediction percentage
+
+      if (predict_prob >= 0.5) {
+        advice <- generateContent("What should a person do if they have a high chance of heart disease?", "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ")
+        lifestyle_changes <- generateContent("Suggest lifestyle changes for heart disease prevention.", "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ")
+        healthcare_consultation <- generateContent("What kind of healthcare consultation should a person seek if they are at risk for heart disease?", "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ")
+        
+        output$cvd_advice <- renderText({
+          paste0("Possibility of Cardiovascular Disease: ", predict_prob_hund, "%\n",
+                 "Advice: ", advice, "\n\n",
+                 "Lifestyle Changes: ", lifestyle_changes, "\n\n",
+                 "Healthcare Consultation: ", healthcare_consultation)
+        })
+
+        infoBox("Risk Alert", paste0("Possibility of Cardiovascular Disease: ", predict_prob_hund, "%"), 
+                icon = icon("alert", lib = "glyphicon"), 
+                color = "red", fill = TRUE)
+      } else {
+        output$cvd_advice <- renderText({
+          paste0("Possibility of Cardiovascular Disease: ", predict_prob_hund, "%\n", 
+                 "You are classified as low risk for cardiovascular disease.")
+        })
+
+        infoBox("Low Risk", paste0("Possibility of Cardiovascular Disease: ", predict_prob_hund, "%"), 
+                icon = icon("check", lib = "glyphicon"), 
+                color = "green", fill = TRUE)
+      }
+    })
+  } else {
+    output$PredictBox <- renderInfoBox({
+      infoBox("Data Error", "Not enough data to make predictions.", icon = icon("exclamation-triangle"), color = "yellow", fill = TRUE)
+    })
+  }
+
+  # PCA Implementation
+  output$pca_plot <- renderPlot({
+    pca <- prcomp(dfCardio[, -1], center = TRUE, scale. = TRUE)
+    ggplot(as.data.frame(pca$x), aes(x = PC1, y = PC2, color = factor(dfCardio$cardio))) +
+      geom_point(size = 2, alpha = 0.7) +
+      theme_minimal() +
+      ggtitle("PCA: PC1 vs PC2") +
+      xlab("Principal Component 1") +
+      ylab("Principal Component 2") +
+      labs(color = "Cardio")
+  })
+
+  output$pca_summary <- renderPrint({
+    pca <- prcomp(dfCardio[, -1], center = TRUE, scale. = TRUE)
+    summary(pca)
+  })
+
+  output$pca_variance_plot <- renderPlot({
+    pca <- prcomp(dfCardio[, -1], center = TRUE, scale. = TRUE)
+    variance_explained <- pca$sdev^2 / sum(pca$sdev^2)
+    qplot(1:length(variance_explained), variance_explained, geom="line", 
+          xlab="Principal Component", ylab="Variance Explained", main="Variance Explained by Principal Components") +
+      theme_minimal() +
+      geom_point()
+  })
+
+ # t-SNE Visualization
+  output$tsne_plot <- renderPlot({
+    set.seed(123)  # For reproducibility
+    tsne_result <- Rtsne(dfCardio[, -1], dims = 2, pca = TRUE, verbose = TRUE, check_duplicates = FALSE)
+    
+    tsne_data <- as.data.frame(tsne_result$Y)
+    colnames(tsne_data) <- c("Dim1", "Dim2")
+    tsne_data$cardio <- dfCardio$cardio
+    
+    ggplot(tsne_data, aes(x = Dim1, y = Dim2, color = factor(cardio))) +
+      geom_point(size = 1.5, alpha = 0.7) +
+      theme_minimal() +
+      labs(title = "t-SNE Visualization", x = "t-SNE Dimension 1", y = "t-SNE Dimension 2", color = "CVD Status")
+  })
+
+
+  # Decision Tree Model
+  decision_tree_model <- reactive({
+    set.seed(123)
+    training.samples <- df$cardio %>% createDataPartition(p = 0.8, list = FALSE)
+    train.tree <- df[training.samples, ]
+    test.tree <- df[-training.samples,]
+    
+    tree_model <- rpart(cardio ~ ., data = train.tree, method = "class")
+    return(list(model = tree_model, test = test.tree))
+  })
+
+  output$tree_plot <- renderPlot({
+    tree_model_info <- decision_tree_model()
+    rpart.plot(tree_model_info$model, main = "Decision Tree for Cardiovascular Disease Prediction")
+  })
+
+  output$tree_summary <- renderPrint({
+    tree_model_info <- decision_tree_model()
+    summary(tree_model_info$model)
+  })
+
+  output$tree_metrics <- renderPrint({
+    tree_model_info <- decision_tree_model()
+    predictions <- predict(tree_model_info$model, tree_model_info$test, type = "class")
+    confusion_mtx <- confusionMatrix(factor(predictions), factor(tree_model_info$test$cardio))
+    
+    accuracy_value <- confusion_mtx$overall["Accuracy"]
+    kappa_value <- confusion_mtx$overall["Kappa"]
+    f1_value <- confusion_mtx$byClass["F1"] 
+    
+    paste0("Accuracy: ", round(accuracy_value * 100, 2), "%\n",
+           "Kappa: ", round(kappa_value, 2), "\n",
+           "F1 Score: ", round(f1_value, 2))
+  })
+
+  # ROC Curve for Decision Tree
+  output$roc_plot_dt <- renderPlot({
+    tree_model_info <- decision_tree_model()
+    dt_probabilities <- predict(tree_model_info$model, tree_model_info$test, type = "prob")[, 2]  # Probability of class 1
+    dt_roc_curve <- roc(tree_model_info$test$cardio, dt_probabilities)
+    ggroc(dt_roc_curve, alpha = 0.8, color = "blue") + 
+      ggtitle("ROC Curve - Decision Tree") + 
+      xlab("False Positive Rate") +
+      ylab("True Positive Rate")
+  })
+
+  # AUC for Decision Tree
+  output$auc_plot_dt <- renderPlot({
+    tree_model_info <- decision_tree_model()
+    dt_probabilities <- predict(tree_model_info$model, tree_model_info$test, type = "prob")[, 2]
+    dt_roc_curve <- roc(tree_model_info$test$cardio, dt_probabilities)
+    dt_auc_value <- auc(dt_roc_curve)
+    ggroc(dt_roc_curve, alpha = 0.8, color = "blue") + 
+      annotate("text", x = 0.5, y = 0.5, label = paste("AUC =", round(dt_auc_value, 2)), size = 5, color = "red") +
+      ggtitle("ROC Curve with AUC - Decision Tree") + 
+      xlab("False Positive Rate") +
+      ylab("True Positive Rate")
+  })
+
+  # Random Forest Model
+  random_forest_model <- reactive({
+    set.seed(123)
+    training.samples <- df$cardio %>% createDataPartition(p = 0.8, list = FALSE)
+    train.rf <- df[training.samples, ]
+    test.rf <- df[-training.samples, ]
+    
+    rf_model <- randomForest(cardio ~ ., data = train.rf)
+    return(list(model = rf_model, test = test.rf))
+  })
+
+  output$rf_summary <- renderPrint({
+    rf_model_info <- random_forest_model()
+    print(rf_model_info$model)
+  })
+
+  output$rf_accuracy <- renderPrint({
+    rf_model_info <- random_forest_model()
+    predictions <- predict(rf_model_info$model, rf_model_info$test)
+    accuracy <- mean(predictions == rf_model_info$test$cardio)
+    paste0("Accuracy: ", round(accuracy * 100, 2), "%")
+  })
+
+  output$rf_confusion <- renderPrint({
+    rf_model_info <- random_forest_model()
+    confusion_mtx <- table(predict(rf_model_info$model, rf_model_info$test), rf_model_info$test$cardio)
+    output$confusion_rf <- renderPrint(confusion_mtx)
+    
+    # Save confusion matrix metrics for later use
+    confusion_matrix_rf <- confusionMatrix(factor(predict(rf_model_info$model, rf_model_info$test)), factor(rf_model_info$test$cardio))
+    output$confusion_rf <- renderPrint(confusion_matrix_rf$table)
+
+    output$metrics_rf <- renderPrint({
+      paste0("True Positive (TP): ", confusion_matrix_rf$table[2,2], "\n",
+             "True Negative (TN): ", confusion_matrix_rf$table[1,1], "\n",
+             "False Positive (FP): ", confusion_matrix_rf$table[1,2], "\n",
+             "False Negative (FN): ", confusion_matrix_rf$table[2,1])
+    })
+  })
+
+  output$rf_specificity <- renderPrint({
+    rf_model_info <- random_forest_model()
+    predictions <- predict(rf_model_info$model, rf_model_info$test)
+    confusion_mtx <- confusionMatrix(factor(predictions), factor(rf_model_info$test$cardio))
+    tn <- confusion_mtx$table[1, 1]  # True Negative
+    fp <- confusion_mtx$table[1, 2]  # False Positive
+    specificity <- tn / (tn + fp)
+    round(specificity, 2)
+  })
+
+  output$rf_mcc <- renderPrint({
+    rf_model_info <- random_forest_model()
+    predictions <- predict(rf_model_info$model, rf_model_info$test)
+    confusion_matrix <- confusionMatrix(factor(predictions), factor(rf_model_info$test$cardio))
+    tn <- confusion_matrix$table[1, 1]  # True Negative
+    fp <- confusion_matrix$table[1, 2]  # False Positive
+    fn <- confusion_matrix$table[2, 1]  # False Negative
+    tp <- confusion_matrix$table[2, 2]  # True Positive
+    mcc <- (tp * tn - fp * fn) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    round(mcc, 2)
+  })
+
+  output$rf_metrics <- renderPrint({
+    rf_model_info <- random_forest_model()
+    predictions <- predict(rf_model_info$model, rf_model_info$test)
+    confusion_matrix <- confusionMatrix(factor(predictions), factor(rf_model_info$test$cardio))
+    f1_score <- confusion_matrix$byClass["F1"]
+    precision <- confusion_matrix$byClass["Precision"]
+    recall <- confusion_matrix$byClass["Recall"]
+    
+    paste0("F1 Score: ", round(f1_score, 2), "\n",
+           "Precision: ", round(precision, 2), "\n",
+           "Recall: ", round(recall, 2))
+  })
+
+  # ROC Curve for Random Forest
+  output$roc_plot_rf <- renderPlot({
+    rf_model_info <- random_forest_model()
+    rf_probabilities <- predict(rf_model_info$model, rf_model_info$test, type = "prob")[, 2]
+    rf_roc_curve <- roc(rf_model_info$test$cardio, rf_probabilities)
+    ggroc(rf_roc_curve, alpha = 0.8, color = "blue") + 
+      ggtitle("ROC Curve - Random Forest") + 
+      xlab("False Positive Rate") +
+      ylab("True Positive Rate")
+  })
+
+  # AUC for Random Forest
+  output$auc_plot_rf <- renderPlot({
+    rf_model_info <- random_forest_model()
+    rf_probabilities <- predict(rf_model_info$model, rf_model_info$test, type = "prob")[, 2]
+    rf_roc_curve <- roc(rf_model_info$test$cardio, rf_probabilities)
+    rf_auc_value <- auc(rf_roc_curve)
+    ggroc(rf_roc_curve, alpha = 0.8, color = "blue") + 
+      annotate("text", x = 0.5, y = 0.5, label = paste("AUC =", round(rf_auc_value, 2)), size = 5, color = "red") +
+      ggtitle("ROC Curve with AUC - Random Forest") + 
+      xlab("False Positive Rate") +
+      ylab("True Positive Rate")
+  })
+
+  # Feature Importance for Logistic Regression
+  output$feature_importance_plot_lr <- renderPlot({
+    feature_importance <- abs(coef(model)[-1])  # Exclude intercept
+    feature_importance_df <- data.frame(Feature = names(feature_importance), Importance = feature_importance) %>%
+                              arrange(desc(Importance))
+    
+    ggplot(feature_importance_df, aes(x = reorder(Feature, Importance), y = Importance)) +
+      geom_bar(stat = "identity", fill = "skyblue") +
+      coord_flip() +
+      ggtitle("Feature Importance for Logistic Regression Model") +
+      xlab("Features") +
+      ylab("Importance (Absolute Coefficient)")
+  })
+
+  # Random Forest Feature Importance
+  output$feature_importance_plot_rf <- renderPlot({
+    rf_model_info <- random_forest_model()
+    rf_importance <- importance(rf_model_info$model)
+    rf_importance_df <- data.frame(Feature = rownames(rf_importance), Importance = rf_importance[, 1]) %>%
+                        arrange(desc(Importance))
+    
+    ggplot(rf_importance_df, aes(x = reorder(Feature, Importance), y = Importance)) +
+      geom_bar(stat = "identity", fill = "green") +
+      coord_flip() +
+      ggtitle("Feature Importance for Random Forest Model") +
+      xlab("Features") +
+      ylab("Importance")
+  })
+
+  # Decision Tree Feature Importance
+  output$feature_importance_plot_dt <- renderPlot({
+    tree_model_info <- decision_tree_model()
+    tree_importance <- tree_model_info$model$variable.importance
+    tree_importance_df <- data.frame(Feature = names(tree_importance), Importance = tree_importance) %>%
+                          arrange(desc(Importance))
+    
+    ggplot(tree_importance_df, aes(x = reorder(Feature, Importance), y = Importance)) +
+      geom_bar(stat = "identity", fill = "orange") +
+      coord_flip() +
+      ggtitle("Feature Importance for Decision Tree Model") +
+      xlab("Features") +
+      ylab("Importance")
+  })
+
+  # KNN Model metrics
+  knn_model <- reactive({
+    set.seed(123)
+    training.samples <- df$cardio %>% createDataPartition(p = 0.8, list = FALSE)
+    train.knn <- df[training.samples, ]
+    test.knn <- df[-training.samples, ]
+    
+    knn_pred <- knn(train.knn[,-1], test.knn[,-1], cl = train.knn$cardio, k = 5)
+    return(list(predictions = knn_pred, test = test.knn))
+  })
+
+  output$knn_accuracy <- renderPrint({
+    knn_model_info <- knn_model()
+    accuracy <- mean(knn_model_info$predictions == knn_model_info$test$cardio)
+    paste0("Accuracy: ", round(accuracy * 100, 2), "%")
+  })
+
+  output$knn_confusion <- renderPrint({
+    knn_model_info <- knn_model()
+    confusion_mtx <- table(knn_model_info$predictions, knn_model_info$test$cardio)
+    output$confusion_knn <- renderPrint(confusion_mtx)
+
+    # Save confusion matrix metrics for later use
+    confusion_matrix_knn <- confusionMatrix(factor(knn_model_info$predictions), factor(knn_model_info$test$cardio))
+    output$confusion_knn <- renderPrint(confusion_matrix_knn$table)
+
+    output$metrics_knn <- renderPrint({
+      paste0("True Positive (TP): ", confusion_matrix_knn$table[2, 2], "\n",
+             "True Negative (TN): ", confusion_matrix_knn$table[1, 1], "\n",
+             "False Positive (FP): ", confusion_matrix_knn$table[1, 2], "\n",
+             "False Negative (FN): ", confusion_matrix_knn$table[2, 1])
+    })
+  })
+
+  output$knn_specificity <- renderPrint({
+    knn_model_info <- knn_model()
+    confusion_mtx <- confusionMatrix(factor(knn_model_info$predictions), factor(knn_model_info$test$cardio))
+    tn <- confusion_mtx$table[1, 1]
+    fp <- confusion_mtx$table[1, 2]
+    specificity <- tn / (tn + fp)
+    round(specificity, 2)
+  })
+
+  output$knn_mcc <- renderPrint({
+    knn_model_info <- knn_model()
+    confusion_matrix <- confusionMatrix(factor(knn_model_info$predictions), factor(knn_model_info$test$cardio))
+    tn <- confusion_matrix$table[1, 1]
+    fp <- confusion_matrix$table[1, 2]
+    fn <- confusion_matrix$table[2, 1]
+    tp <- confusion_matrix$table[2, 2]
+    mcc <- (tp * tn - fp * fn) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    round(mcc, 2)
+  })
+
+  output$knn_metrics <- renderPrint({
+    knn_model_info <- knn_model()
+    confusion_matrix <- confusionMatrix(factor(knn_model_info$predictions), factor(knn_model_info$test$cardio))
+    f1_score <- confusion_matrix$byClass["F1"]
+    precision <- confusion_matrix$byClass["Precision"]
+    recall <- confusion_matrix$byClass["Recall"]
+    
+    paste0("F1 Score: ", round(f1_score, 2), "\n",
+           "Precision: ", round(precision, 2), "\n",
+           "Recall: ", round(recall, 2))
+  })
+
+  # Naive Bayes Model
+  naive_bayes_model <- reactive({
+    set.seed(123)
+    training.samples <- df$cardio %>% createDataPartition(p = 0.8, list = FALSE)
+    train.nb <- df[training.samples, ]
+    test.nb <- df[-training.samples, ]
+    
+    nb_model <- naiveBayes(cardio ~ ., data = train.nb)
+    nb_pred <- predict(nb_model, test.nb)
+    return(list(predictions = nb_pred, test = test.nb))
+  })
+
+  output$nb_accuracy <- renderPrint({
+    nb_model_info <- naive_bayes_model()
+    accuracy <- mean(nb_model_info$predictions == nb_model_info$test$cardio)
+    paste0("Accuracy: ", round(accuracy * 100, 2), "%")
+  })
+
+  output$nb_confusion <- renderPrint({
+    nb_model_info <- naive_bayes_model()
+    confusion_mtx <- table(nb_model_info$predictions, nb_model_info$test$cardio)
+    output$confusion_nb <- renderPrint(confusion_mtx)
+
+    # Save confusion matrix metrics for later use
+    confusion_matrix_nb <- confusionMatrix(factor(nb_model_info$predictions), factor(nb_model_info$test$cardio))
+    output$confusion_nb <- renderPrint(confusion_matrix_nb$table)
+
+    output$metrics_nb <- renderPrint({
+      paste0("True Positive (TP): ", confusion_matrix_nb$table[2, 2], "\n",
+             "True Negative (TN): ", confusion_matrix_nb$table[1, 1], "\n",
+             "False Positive (FP): ", confusion_matrix_nb$table[1, 2], "\n",
+             "False Negative (FN): ", confusion_matrix_nb$table[2, 1])
+    })
+  })
+
+  output$nb_specificity <- renderPrint({
+    nb_model_info <- naive_bayes_model()
+    confusion_mtx <- confusionMatrix(factor(nb_model_info$predictions), factor(nb_model_info$test$cardio))
+    tn <- confusion_mtx$table[1, 1]
+    fp <- confusion_mtx$table[1, 2]
+    specificity <- tn / (tn + fp)
+    round(specificity, 2)
+  })
+
+  output$nb_mcc <- renderPrint({
+    nb_model_info <- naive_bayes_model()
+    confusion_matrix <- confusionMatrix(factor(nb_model_info$predictions), factor(nb_model_info$test$cardio))
+    tn <- confusion_matrix$table[1, 1]
+    fp <- confusion_matrix$table[1, 2]
+    fn <- confusion_matrix$table[2, 1]
+    tp <- confusion_matrix$table[2, 2]
+    mcc <- (tp * tn - fp * fn) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    round(mcc, 2)
+  })
+
+  output$nb_metrics <- renderPrint({
+    nb_model_info <- naive_bayes_model()
+    confusion_matrix <- confusionMatrix(factor(nb_model_info$predictions), factor(nb_model_info$test$cardio))
+    f1_score <- confusion_matrix$byClass["F1"]
+    precision <- confusion_matrix$byClass["Precision"]
+    recall <- confusion_matrix$byClass["Recall"]
+
+    paste0("F1 Score: ", round(f1_score, 2), "\n",
+           "Precision: ", round(precision, 2), "\n",
+           "Recall: ", round(recall, 2))
+  })
+
+  # Neural Network Model
+  neural_network_model <- reactive({
+    set.seed(123)
+    training.samples <- df$cardio %>% createDataPartition(p = 0.8, list = FALSE)
+    train.nn <- df[training.samples, ]
+    test.nn <- df[-training.samples, ]
+
+    # Train neural network
+    nn_model <- nnet(cardio ~ ., data = train.nn, size = 5, maxit = 200, decay = 0.01, trace = FALSE)
+    nn_pred <- predict(nn_model, test.nn, type = "class")
+    
+    return(list(model = nn_model, predictions = nn_pred, test = test.nn))
+  })
+
+  output$nn_summary <- renderPrint({
+    nn_model_info <- neural_network_model()
+    print(nn_model_info$model)
+  })
+
+  output$nn_accuracy <- renderPrint({
+    nn_model_info <- neural_network_model()
+    accuracy <- mean(nn_model_info$predictions == nn_model_info$test$cardio)
+    paste0("Accuracy: ", round(accuracy * 100, 2), "%")
+  })
+
+  output$nn_confusion <- renderPrint({
+    nn_model_info <- neural_network_model()
+    confusion_mtx <- table(nn_model_info$predictions, nn_model_info$test$cardio)
+    output$confusion_nn <- renderPrint(confusion_mtx)
+
+    # Save confusion matrix metrics for later use
+    confusion_matrix_nn <- confusionMatrix(factor(nn_model_info$predictions), factor(nn_model_info$test$cardio))
+    output$confusion_nn <- renderPrint(confusion_matrix_nn$table)
+
+    output$metrics_nn <- renderPrint({
+      paste0("True Positive (TP): ", confusion_matrix_nn$table[2, 2], "\n",
+             "True Negative (TN): ", confusion_matrix_nn$table[1, 1], "\n",
+             "False Positive (FP): ", confusion_matrix_nn$table[1, 2], "\n",
+             "False Negative (FN): ", confusion_matrix_nn$table[2, 1])
+    })
+  })
+
+  output$nn_specificity <- renderPrint({
+    nn_model_info <- neural_network_model()
+    confusion_mtx <- confusionMatrix(factor(nn_model_info$predictions), factor(nn_model_info$test$cardio))
+    tn <- confusion_mtx$table[1, 1]
+    fp <- confusion_mtx$table[1, 2]
+    specificity <- tn / (tn + fp)
+    round(specificity, 2)
+  })
+
+  output$nn_mcc <- renderPrint({
+    nn_model_info <- neural_network_model()
+    confusion_matrix <- confusionMatrix(factor(nn_model_info$predictions), factor(nn_model_info$test$cardio))
+    tn <- confusion_matrix$table[1, 1]
+    fp <- confusion_matrix$table[1, 2]
+    fn <- confusion_matrix$table[2, 1]
+    tp <- confusion_matrix$table[2, 2]
+    mcc <- (tp * tn - fp * fn) / sqrt((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn))
+    round(mcc, 2)
+  })
+
+  output$nn_metrics <- renderPrint({
+    nn_model_info <- neural_network_model()
+    confusion_matrix <- confusionMatrix(factor(nn_model_info$predictions), factor(nn_model_info$test$cardio))
+    f1_score <- confusion_matrix$byClass["F1"]
+    precision <- confusion_matrix$byClass["Precision"]
+    recall <- confusion_matrix$byClass["Recall"]
+
+    paste0("F1 Score: ", round(f1_score, 2), "\n",
+           "Precision: ", round(precision, 2), "\n",
+           "Recall: ", round(recall, 2))
+  })
+
+  # Performance Comparison Table
+  output$performance_table <- renderDataTable({
+    # Gather metrics for all models
+    metrics <- data.frame(
+      Model = c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network"),
+      Accuracy = c(round(mean(predicted.classes == test.data$cardio), 2), 
+                   confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$overall["Accuracy"],
+                   mean(predict(random_forest_model()$model, random_forest_model()$test) == random_forest_model()$test$cardio),
+                   mean(knn_model()$predictions == knn_model()$test$cardio),
+                   mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio),
+                   mean(neural_network_model()$predictions == neural_network_model()$test$cardio)),
+      F1_Score = c(f1_score,
+                   confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(knn_model()$predictions), factor(knn_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(naive_bayes_model()$predictions), factor(naive_bayes_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["F1"])
+    )
+
+    # Setting options for appearance of datatable
+    datatable(metrics, options = list(pageLength = 5, searching = FALSE))
+  })
+
+  # Plotting metrics in ML Metrics tab
+  output$f1_score_plot <- renderPlot({
+    f1_values <- c(f1_score,
+                   confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(knn_model()$predictions), factor(knn_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(naive_bayes_model()$predictions), factor(naive_bayes_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["F1"])
+
+    model_names <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")
+    bar_data <- data.frame(Model = model_names, F1_Score = f1_values)
+
+    ggplot(bar_data, aes(x = Model, y = F1_Score, fill = Model)) +
+      geom_bar(stat = "identity") +
+      scale_fill_manual(values = rainbow(length(model_names))) +
+      labs(title = "F1 Score Comparison", y = "F1 Score") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+
+  output$recall_plot <- renderPlot({
+    recall_values <- c(confusion_matrix_lr$byClass["Recall"],
+                       confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$byClass["Recall"],
+                       confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["Recall"],
+                       confusionMatrix(factor(knn_model()$predictions), factor(knn_model()$test$cardio))$byClass["Recall"],
+                       confusionMatrix(factor(naive_bayes_model()$predictions), factor(naive_bayes_model()$test$cardio))$byClass["Recall"],
+                       confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["Recall"])
+
+    model_names <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")
+    bar_data <- data.frame(Model = model_names, Recall = recall_values)
+
+    ggplot(bar_data, aes(x = Model, y = Recall, fill = Model)) +
+      geom_bar(stat = "identity") +
+      scale_fill_manual(values = rainbow(length(model_names))) +
+      labs(title = "Recall Comparison", y = "Recall") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+
+  output$precision_plot <- renderPlot({
+    precision_values <- c(confusion_matrix_lr$byClass["Precision"],
+                          confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$byClass["Precision"],
+                          confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["Precision"],
+                          confusionMatrix(factor(knn_model()$predictions), factor(knn_model()$test$cardio))$byClass["Precision"],
+                          confusionMatrix(factor(naive_bayes_model()$predictions), factor(naive_bayes_model()$test$cardio))$byClass["Precision"],
+                          confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["Precision"])
+
+    model_names <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")
+    bar_data <- data.frame(Model = model_names, Precision = precision_values)
+
+    ggplot(bar_data, aes(x = Model, y = Precision, fill = Model)) +
+      geom_bar(stat = "identity") +
+      scale_fill_manual(values = rainbow(length(model_names))) +
+      labs(title = "Precision Comparison", y = "Precision") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+
+  output$accuracy_plot <- renderPlot({
+    accuracy_values <- c(round(mean(predicted.classes == test.data$cardio), 2), 
+                         confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$overall["Accuracy"],
+                         mean(predict(random_forest_model()$model, random_forest_model()$test) == random_forest_model()$test$cardio),
+                         mean(knn_model()$predictions == knn_model()$test$cardio),
+                         mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio),
+                         mean(neural_network_model()$predictions == neural_network_model()$test$cardio))
+
+    model_names <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")
+    bar_data <- data.frame(Model = model_names, Accuracy = accuracy_values)
+
+    ggplot(bar_data, aes(x = Model, y = Accuracy, fill = Model)) +
+      geom_bar(stat = "identity") +
+      scale_fill_manual(values = rainbow(length(model_names))) +
+      labs(title = "Accuracy Comparison", y = "Accuracy") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+
+  observeEvent(input$next_to_descriptive, {
+    updateTabItems(session, "sidebar", "Descriptiveanalytics")
+  })
+
+  observeEvent(input$next_to_model, {
+    updateTabItems(session, "sidebar", "logistic_model")
+  })
+
+  observeEvent(input$next_to_decision_tree, {
+    updateTabItems(session, "sidebar", "decision_tree")
+  })
+  
+  observeEvent(input$next_to_random_forest, {
+    updateTabItems(session, "sidebar", "random_forest")
+  })
+
+  observeEvent(input$next_to_knn, {
+    updateTabItems(session, "sidebar", "knn_model")
+  })
+
+  observeEvent(input$next_to_naive_bayes, {
+    updateTabItems(session, "sidebar", "naive_bayes_model")
+  })
+
+  observeEvent(input$next_to_neural_network, {
+    updateTabItems(session, "sidebar", "neural_network_model")
+  })
+
+  observeEvent(input$next_to_model_comparison, {
+    updateTabItems(session, "sidebar", "model_comparison")
+  })
+
+  # K-Means Clustering
+  output$kmeans_plot <- renderPlot({
+    set.seed(123)
+    kmeans_result <- kmeans(dfCardio[, -1], centers = 3)
+    dfCardio$cluster <- as.factor(kmeans_result$cluster)
+    
+    ggplot(dfCardio, aes(x = age, y = height, color = cluster)) +
+      geom_point(size = 2, alpha = 0.7) +
+      theme_minimal() +
+      ggtitle("K-Means Clustering Result") +
+      labs(color = "Cluster")
+  })
+
+  output$kmeans_summary <- renderPrint({
+    set.seed(123)
+    kmeans_result <- kmeans(dfCardio[, -1], centers = 3)
+    print(kmeans_result)
+  })
+
+  output$elbow_plot <- renderPlot({
+    wss <- numeric(10)
+    for (i in 1:10) {
+      kmeans_result <- kmeans(dfCardio[, -1], centers = i)
+      wss[i] <- kmeans_result$tot.withinss
+    }
+    plot(1:10, wss, type = "b", pch = 19, xlab = "Number of Clusters", ylab = "Total Within-Cluster Sum of Squares",
+         main = "Elbow Method")
+  })
+
+  # Hierarchical Clustering
+  output$hclust_plot <- renderPlot({
+    # Sample the data to avoid drawing too many points
+    sampled_dfCardio <- dfCardio[sample(nrow(dfCardio), min(1000, nrow(dfCardio))), ]  # Sample up to 1000 rows
+    dist_mat <- dist(sampled_dfCardio[, -1])  # Compute distance matrix
+    hclust_result <- hclust(dist_mat)  # Hierarchical clustering
+    plot(hclust_result, labels = sampled_dfCardio$cardio, main = "Hierarchical Clustering Dendrogram", xlab = "Cardio")
+  })
+
+  output$hclust_summary <- renderPrint({
+    # Sample the data to avoid drawing too many points
+    sampled_dfCardio <- dfCardio[sample(nrow(dfCardio), min(1000, nrow(dfCardio))), ]  # Sample up to 1000 rows
+    dist_mat <- dist(sampled_dfCardio[, -1])  # Compute distance matrix
+    hclust_result <- hclust(dist_mat)  # Hierarchical clustering
+    print(hclust_result)
+  })
+
+  # Chatbot Logic
+  observeEvent(input$generateBtn, {
+    headers <- c(`Content-Type` = "application/json")
+    api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ"  # Replace with your actual API key
+
+    user_text <- input$userInput
+    
+    if (user_text != "") {
+      # Check if the user is asking for advice or prediction
+      if (grepl("advice|recommendation|suggest|what to do", user_text, ignore.case = TRUE) || 
+          grepl("prediction", user_text, ignore.case = TRUE)) {
+        response <- generateContent(paste("The prediction percentage is", prediction_percentage(), 
+                                           "and the user asked:", user_text), api_key)
+      } else {
+        response <- generateContent(user_text, api_key)
+      }
+
+      response <- ifelse(is.null(response), "An error occurred, please refresh the page.", response)
+      chat_history(rbind(chat_history(), data.frame(Role = "User", Message = user_text), stringsAsFactors = FALSE))
+      chat_history(rbind(chat_history(), data.frame(Role = "Model", Message = response), stringsAsFactors = FALSE))
+      
+      output$chatOutput <- renderDataTable({
+        DT::datatable(
+          chat_history(),
+          options = list(
+            paging = FALSE,
+            searching = FALSE
+          ),
+          rownames = FALSE,
+          class = 'cell-border stripe',
+          escape = FALSE
+        )
+      })
+
+      updateTextInput(session, "userInput", value = "")
+    }
+  })
+
+  # Render the Naive Bayes Confusion Matrix
+  output$nb_plot <- renderPlot({
+    create_cm_plot(nb_cm, "Naive Bayes")
+  })
+  
+  # Render the Logistic Regression Confusion Matrix
+  output$lg_plot <- renderPlot({
+    create_cm_plot(lg_cm, "Logistic Regression")
+  })
+  
+  # Render the Neural Network Confusion Matrix
+  output$nn_plot <- renderPlot({
+    create_cm_plot(nn_cm, "Neural Network")
+  })
+  
+  # Render the Random Forest Confusion Matrix
+  output$rf_plot <- renderPlot({
+    create_cm_plot(rf_cm, "Random Forest")
+  })
+}
+
+# Create and run the Shiny app
+shinyApp(ui = ui, server = server)
