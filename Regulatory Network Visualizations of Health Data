@@ -1,0 +1,205 @@
+Complex and Messy Regulatory Network Visualizations of Health Data
+library(shiny)
+library(shinycssloaders)
+library(DT)
+library(tidyverse)
+library(visNetwork)
+library(igraph)
+
+# Perform Differential Expression Analysis (DEA)
+perform_dea <- function(data) {
+  features <- data %>% select(age, height, weight, ap_hi, ap_lo, cholesterol, gluc)
+  dea_results <- lapply(features, function(feature) {
+    t_test_result <- t.test(feature ~ data$cardio)
+    mean_group_1 <- mean(feature[data$cardio == 1])
+    mean_group_0 <- mean(feature[data$cardio == 0])
+    sd_group_1 <- sd(feature[data$cardio == 1])
+    sd_group_0 <- sd(feature[data$cardio == 0])
+    data.frame(
+      Feature = deparse(substitute(feature)),
+      p_value = t_test_result$p.value,
+      logFC = mean_group_1 - mean_group_0,
+      adj_p_value = p.adjust(t_test_result$p.value, method = "BH"),
+      mean_group_1 = round(mean_group_1, 2),
+      mean_group_0 = round(mean_group_0, 2),
+      sd_group_1 = round(sd_group_1, 2),
+      sd_group_0 = round(sd_group_0, 2)
+    )
+  })
+  do.call(rbind, dea_results)
+}
+
+# Perform DEA on dfCardio
+# dfCardio should be defined here; use your actual data frame
+dea_results <- perform_dea(dfCardio)
+
+# Define UI for the Shiny app
+ui <- fluidPage(
+  titlePanel("Complex and Messy Regulatory Network Visualizations of Health Data"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      checkboxGroupInput("selected_features", 
+                         "Select Features for Network Analysis:", 
+                         choices = c("age", "gender", "height", "weight", "ap_hi", "ap_lo", 
+                                     "cholesterol", "gluc", "smoke", "alco", "active", "cardio"),
+                         selected = c("age", "gender", "cholesterol", "active"))
+    ),
+    
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Global Regulatory Network",
+                 h4("Global Regulatory Network Explanation"),
+                 p("This network shows the relationships between different health features."), 
+                 visNetworkOutput("global_reg_network")),
+        
+        uiOutput("dynamic_tabs"),
+        
+        tabPanel("Differential Expression Analysis",
+                 h4("Differential Expression Analysis (DEA) Results"),
+                 DTOutput("dea_table")),
+        
+        tabPanel("Ontology Model",
+                 h4("Ontology Model Visualization"),
+                 visNetworkOutput("ontology_network")),
+        
+        tabPanel("Clustering Coefficient Network",
+                 h4("Clustering Coefficient Network Visualization"),
+                 visNetworkOutput("clustering_coefficient_network"))
+      )
+    )
+  )
+)
+
+# Define server logic
+server <- function(input, output, session) {
+  
+  # Helper function to create complex and messy regulatory networks
+  create_messy_network <- function(data, threshold = 0.1, focus = NULL) {
+    correlations <- cor(data, use = "complete.obs")
+    edge_list <- which(abs(correlations) > threshold & correlations != 1, arr.ind = TRUE)
+    edges <- data.frame(
+      from = rownames(correlations)[edge_list[, 1]],
+      to = colnames(correlations)[edge_list[, 2]],
+      weight = correlations[edge_list]
+    )
+    
+    if (!is.null(focus)) {
+      edges <- edges %>% filter(from == focus | to == focus)
+    }
+    
+    nodes <- data.frame(
+      id = unique(c(edges$from, edges$to)),
+      label = unique(c(edges$from, edges$to)),
+      color = sample(c("red", "green", "blue", "purple", "orange", "yellow"), 
+                     length(unique(c(edges$from, edges$to))), replace = TRUE)
+    )
+    
+    list(nodes = nodes, edges = edges)
+  }
+  
+  # Global Regulatory Network (Messy version)
+  output$global_reg_network <- renderVisNetwork({
+    selected_data <- dfCardio[, input$selected_features]
+    network <- create_messy_network(selected_data, threshold = 0.1)
+    visNetwork(network$nodes, network$edges) %>%
+      visEdges(arrows = "to", smooth = FALSE) %>%
+      visOptions(highlightNearest = list(enabled = TRUE, degree = 2)) %>%
+      visPhysics(solver = "repulsion") %>%
+      visLayout(randomSeed = 123)
+  })
+  
+  # Dynamically generate tabs for each selected feature
+  output$dynamic_tabs <- renderUI({
+    feature_tabs <- lapply(input$selected_features, function(feature) {
+      tabPanel(
+        paste(feature, "Regulatory Network"), 
+        visNetworkOutput(paste0(feature, "_network"))
+      )
+    })
+    do.call(tabsetPanel, feature_tabs)
+  })
+  
+  # Render individual regulatory networks for each feature
+  observe({
+    lapply(input$selected_features, function(feature) {
+      output[[paste0(feature, "_network")]] <- renderVisNetwork({
+        selected_data <- dfCardio[, input$selected_features]
+        network <- create_messy_network(selected_data, threshold = 0.1, focus = feature)
+        visNetwork(network$nodes, network$edges) %>%
+          visEdges(arrows = "to", smooth = FALSE) %>%
+          visOptions(highlightNearest = list(enabled = TRUE)) %>%
+          visPhysics(solver = "repulsion") %>%
+          visLayout(randomSeed = 123)
+      })
+    })
+  })
+  
+  # Render DEA table with expanded information
+  output$dea_table <- renderDT({
+    datatable(dea_results, options = list(
+      pageLength = 10, 
+      autoWidth = TRUE,
+      dom = 'Bfrtip',
+      buttons = c('copy', 'csv', 'excel')
+    ), 
+    class = "display", 
+    rownames = FALSE)
+  })
+
+  # Create and render ontology network visualization
+  output$ontology_network <- renderVisNetwork({
+    feature_names <- c("Age", "Height", "Weight", "Blood Pressure", "Cholesterol", "Glucose", "Activity Level", "Smoking", "Alcohol", "Cardiovascular Disease")
+    
+    edges <- data.frame(
+      from = c("Age", "Height", "Weight", "Blood Pressure", "Cholesterol", "Glucose", "Activity Level", "Smoking", "Alcohol"),
+      to = rep("Cardiovascular Disease", 9)
+    )
+    
+    nodes <- data.frame(
+      id = feature_names,
+      label = feature_names,
+      color = rep("lightblue", length(feature_names))
+    )
+    
+    visNetwork(nodes, edges) %>%
+      visEdges(arrows = "to") %>%
+      visOptions(highlightNearest = TRUE) %>%
+      visPhysics(solver = "repulsion") %>%
+      visLayout(randomSeed = 123)
+  })
+
+  # Create and render clustering coefficient network visualization
+  output$clustering_coefficient_network <- renderVisNetwork({
+    selected_data <- dfCardio[, input$selected_features]
+    correlation_matrix <- cor(selected_data, use = "complete.obs")
+    
+    # Create igraph object and compute clustering coefficient
+    graph <- graph_from_adjacency_matrix(correlation_matrix, mode = "undirected", weighted = TRUE, diag = FALSE)
+    
+    clustering_coeffs <- transitivity(graph, type = "local")
+    V(graph)$clustering_coeff <- clustering_coeffs
+    
+    # Create edge and node data frames
+    edges <- as.data.frame(get.edgelist(graph))
+    colnames(edges) <- c("from", "to")
+    
+    nodes <- data.frame(
+      id = V(graph)$name,
+      label = V(graph)$name,
+      clustering_coefficient = V(graph)$clustering_coeff,
+      color = "lightgreen"
+    )
+    
+    visNetwork(nodes, edges) %>%
+      visEdges(arrows = "to", smooth = FALSE, width = 1, color = list(highlight = "red")) %>%
+      visOptions(highlightNearest = list(enabled = TRUE, degree = 1)) %>%
+      visPhysics(solver = "repulsion") %>%
+      visLayout(randomSeed = 123)
+  })
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
+
+
