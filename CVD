@@ -138,6 +138,7 @@ ui <- dashboardPage(
       menuItem("Predict", tabName = "predict", icon = icon("heartbeat")),
       menuItem("Recommendations", tabName = "recommendations", icon = icon("book")),
       menuItem("Chatbot", tabName = "chatbot", icon = icon("comments")),
+      menuItem("ML Metrics", tabName = "ml_metrics", icon = icon("chart-line")),  # Added ML Metrics menu item
       menuItem("Model Accuracies Comparison", tabName = "model_accuracies_comparison", icon = icon("chart-line")),
       menuItem("Confusion Matrices", tabName = "confusion_matrices", icon = icon("table")),
       menuItem("Advanced Confusion Matrices", tabName = "advanced_confusion_matrices", icon = icon("table")),
@@ -211,7 +212,7 @@ ui <- dashboardPage(
                 box(title = "Density Plot", status = "primary", solidHeader = TRUE, collapsible = TRUE, plotOutput("density", height = "300px"))
               )
       ),
-     # t-SNE Visualization Tab
+      # t-SNE Visualization Tab
       tabItem(tabName = "tsne_visualization",
               fluidRow(
                 box(title = "t-SNE Visualization", status = "primary", solidHeader = TRUE,
@@ -393,6 +394,15 @@ ui <- dashboardPage(
                 box(title = "Model Comparison Metrics", status = "primary", solidHeader = TRUE, plotOutput("comparison_plot", height = "400px")),
                 box(title = "Model Metrics", status = "primary", solidHeader = TRUE, verbatimTextOutput("model_metrics")),
                 box(title = "Model Performance Overview", status = "primary", solidHeader = TRUE, plotOutput("pie_chart", height = "400px"))
+              )
+      ),
+      # ML Metrics Tab
+      tabItem(tabName = "ml_metrics",
+              fluidRow(
+                box(title = "F1 Score", status = "primary", solidHeader = TRUE, plotOutput("f1_score_plot")),
+                box(title = "Recall", status = "primary", solidHeader = TRUE, plotOutput("recall_plot")),
+                box(title = "Precision", status = "primary", solidHeader = TRUE, plotOutput("precision_plot")),
+                box(title = "Accuracy", status = "primary", solidHeader = TRUE, plotOutput("accuracy_plot"))
               )
       ),
       # Model Accuracies Comparison Tab
@@ -1328,105 +1338,81 @@ server <- function(input, output, session) {
     datatable(metrics, options = list(pageLength = 5, searching = FALSE))
   })
 
-  # Plotting metrics in model comparison tab
-  output$comparison_plot <- renderPlot({
-    models <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")
-    
-    accuracy_values <- c(
-      round(mean(predicted.classes == test.data$cardio), 2), 
-      confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$overall["Accuracy"],
-      mean(predict(random_forest_model()$model, random_forest_model()$test) == random_forest_model()$test$cardio),
-      mean(knn_model()$predictions == knn_model()$test$cardio),
-      mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio),
-      mean(neural_network_model()$predictions == neural_network_model()$test$cardio)
-    )
-    
-    f1_values <- c(
-      f1_score,
-      confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$byClass["F1"],
-      confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["F1"],
-      confusionMatrix(factor(knn_model()$predictions), factor(knn_model()$test$cardio))$byClass["F1"],
-      confusionMatrix(factor(naive_bayes_model()$predictions), factor(naive_bayes_model()$test$cardio))$byClass["F1"],
-      confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["F1"]
-    )
-    
-    # Combine metrics into a dataframe
-    metrics_combined <- data.frame(Model = models, Accuracy = accuracy_values, F1_Score = f1_values)
-    metrics_combined_long <- metrics_combined %>%
-      gather(key = "Metric", value = "Value", Accuracy, F1_Score)
-    
-    ggplot(metrics_combined_long, aes(x = Model, y = Value, fill = Metric)) +
-      geom_bar(stat = "identity", position = position_dodge()) +
-      theme_minimal() +
-      labs(y = "Score", title = "Model Comparison: Accuracy and F1 Score")
-  })
+  # Plotting metrics in ML Metrics tab
+  output$f1_score_plot <- renderPlot({
+    f1_values <- c(f1_score,
+                   confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(knn_model()$predictions), factor(knn_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(naive_bayes_model()$predictions), factor(naive_bayes_model()$test$cardio))$byClass["F1"],
+                   confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["F1"])
 
-  output$pie_chart <- renderPlot({
-    models <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")
-
-    accuracy_values <- c(
-      round(mean(predicted.classes == test.data$cardio), 2), 
-      confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$overall["Accuracy"],
-      mean(predict(random_forest_model()$model, random_forest_model()$test) == random_forest_model()$test$cardio),
-      mean(knn_model()$predictions == knn_model()$test$cardio),
-      mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio),
-      mean(neural_network_model()$predictions == neural_network_model()$test$cardio)
-    )
-
-    f1_values <- c(
-      f1_score,
-      confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$byClass["F1"],
-      confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["F1"],
-      confusionMatrix(factor(knn_model()$predictions), factor(knn_model()$test$cardio))$byClass["F1"],
-      confusionMatrix(factor(naive_bayes_model()$predictions), factor(naive_bayes_model()$test$cardio))$byClass["F1"],
-      confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["F1"]
-    )
-
-    metrics_combined <- data.frame(Model = models, Accuracy = accuracy_values, F1_Score = f1_values)
-
-    # Create Pie Chart for Accuracy
-    pie_values <- metrics_combined$Accuracy
-    naming <- metrics_combined$Model
-    pie_colors <- rainbow(length(naming))
-
-    pie(pie_values, labels = naming, col = pie_colors, main = "Model Accuracy Distribution")
-  })
-
-  # Plotting accuracies comparison
-  output$accuracies_comparison_plot <- renderPlot({
     model_names <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")
+    bar_data <- data.frame(Model = model_names, F1_Score = f1_values)
 
-    # Training accuracies
-    training_accuracies <- c(
-      round(mean(predicted.classes == train.data$cardio), 2),
-      confusionMatrix(factor(predict(decision_tree_model()$model, train.data, type = "class")), factor(train.data$cardio))$overall["Accuracy"],
-      mean(predict(random_forest_model()$model, train.data) == train.data$cardio),
-      mean(knn_model()$predictions[train.data$cardio == train.data$cardio]),
-      mean(naive_bayes_model()$predictions[train.data$cardio == train.data$cardio]),
-      mean(neural_network_model()$predictions[train.data$cardio == train.data$cardio])
-    )
-
-    # Testing accuracies
-    testing_accuracies <- c(
-      round(mean(predicted.classes == test.data$cardio), 2),
-      confusionMatrix(factor(predict(decision_tree_model()$model, test.data, type = "class")), factor(test.data$cardio))$overall["Accuracy"],
-      mean(predict(random_forest_model()$model, test.data) == test.data$cardio),
-      mean(knn_model()$predictions == knn_model()$test$cardio),
-      mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio),
-      mean(neural_network_model()$predictions == neural_network_model()$test$cardio)
-    )
-    
-    # Plotting
-    accuracy_df <- data.frame(
-      Model = rep(model_names, each = 2),
-      Accuracy = c(training_accuracies, testing_accuracies),
-      Type = rep(c("Training", "Testing"), times = length(model_names))
-    )
-    
-    ggplot(accuracy_df, aes(x = Model, y = Accuracy, fill = Type)) +
-      geom_bar(stat = "identity", position = position_dodge()) +
+    ggplot(bar_data, aes(x = Model, y = F1_Score, fill = Model)) +
+      geom_bar(stat = "identity") +
+      scale_fill_manual(values = rainbow(length(model_names))) +
+      labs(title = "F1 Score Comparison", y = "F1 Score") +
       theme_minimal() +
-      labs(y = "Accuracy", title = "Model Accuracies Comparison: Training vs Testing")
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+
+  output$recall_plot <- renderPlot({
+    recall_values <- c(confusion_matrix_lr$byClass["Recall"],
+                       confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$byClass["Recall"],
+                       confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["Recall"],
+                       confusionMatrix(factor(knn_model()$predictions), factor(knn_model()$test$cardio))$byClass["Recall"],
+                       confusionMatrix(factor(naive_bayes_model()$predictions), factor(naive_bayes_model()$test$cardio))$byClass["Recall"],
+                       confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["Recall"])
+
+    model_names <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")
+    bar_data <- data.frame(Model = model_names, Recall = recall_values)
+
+    ggplot(bar_data, aes(x = Model, y = Recall, fill = Model)) +
+      geom_bar(stat = "identity") +
+      scale_fill_manual(values = rainbow(length(model_names))) +
+      labs(title = "Recall Comparison", y = "Recall") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+
+  output$precision_plot <- renderPlot({
+    precision_values <- c(confusion_matrix_lr$byClass["Precision"],
+                          confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$byClass["Precision"],
+                          confusionMatrix(factor(predict(random_forest_model()$model, random_forest_model()$test)), factor(random_forest_model()$test$cardio))$byClass["Precision"],
+                          confusionMatrix(factor(knn_model()$predictions), factor(knn_model()$test$cardio))$byClass["Precision"],
+                          confusionMatrix(factor(naive_bayes_model()$predictions), factor(naive_bayes_model()$test$cardio))$byClass["Precision"],
+                          confusionMatrix(factor(neural_network_model()$predictions), factor(neural_network_model()$test$cardio))$byClass["Precision"])
+
+    model_names <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")
+    bar_data <- data.frame(Model = model_names, Precision = precision_values)
+
+    ggplot(bar_data, aes(x = Model, y = Precision, fill = Model)) +
+      geom_bar(stat = "identity") +
+      scale_fill_manual(values = rainbow(length(model_names))) +
+      labs(title = "Precision Comparison", y = "Precision") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  })
+
+  output$accuracy_plot <- renderPlot({
+    accuracy_values <- c(round(mean(predicted.classes == test.data$cardio), 2), 
+                         confusionMatrix(factor(predict(decision_tree_model()$model, decision_tree_model()$test, type = "class")), factor(decision_tree_model()$test$cardio))$overall["Accuracy"],
+                         mean(predict(random_forest_model()$model, random_forest_model()$test) == random_forest_model()$test$cardio),
+                         mean(knn_model()$predictions == knn_model()$test$cardio),
+                         mean(naive_bayes_model()$predictions == naive_bayes_model()$test$cardio),
+                         mean(neural_network_model()$predictions == neural_network_model()$test$cardio))
+
+    model_names <- c("Logistic Regression", "Decision Tree", "Random Forest", "KNN", "Naive Bayes", "Neural Network")
+    bar_data <- data.frame(Model = model_names, Accuracy = accuracy_values)
+
+    ggplot(bar_data, aes(x = Model, y = Accuracy, fill = Model)) +
+      geom_bar(stat = "identity") +
+      scale_fill_manual(values = rainbow(length(model_names))) +
+      labs(title = "Accuracy Comparison", y = "Accuracy") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
   })
 
   observeEvent(input$next_to_descriptive, {
@@ -1563,43 +1549,6 @@ server <- function(input, output, session) {
   # Render the Random Forest Confusion Matrix
   output$rf_plot <- renderPlot({
     create_cm_plot(rf_cm, "Random Forest")
-  })
-
-  # Statistical Tests Logic
-  observeEvent(input$run_chisq_test, {
-    # Example: Chi-Squared Test
-    chisq_result <- chisq.test(table(dfCardio$gender, dfCardio$cardio))
-    output$chisq_result <- renderPrint(chisq_result)
-  })
-
-  observeEvent(input$run_t_test, {
-    # Example: T-Test
-    t_test_result <- t.test(dfCardio$age ~ dfCardio$cardio)
-    output$t_test_result <- renderPrint(t_test_result)
-  })
-
-  observeEvent(input$run_anova_test, {
-    # Example: ANOVA
-    anova_result <- aov(age ~ cardio, data = dfCardio)
-    output$anova_result <- renderPrint(summary(anova_result))
-  })
-
-  observeEvent(input$run_mann_whitney, {
-    # Example: Mann-Whitney U Test
-    mann_whitney_result <- wilcox.test(age ~ cardio, data = dfCardio)
-    output$mann_whitney_result <- renderPrint(mann_whitney_result)
-  })
-
-  observeEvent(input$run_kruskal_test, {
-    # Example: Kruskal-Wallis Test
-    kruskal_result <- kruskal.test(age ~ cardio, data = dfCardio)
-    output$kruskal_result <- renderPrint(kruskal_result)
-  })
-
-  observeEvent(input$run_ks_test, {
-    # Example: Kolmogorov-Smirnov Test
-    ks_test_result <- ks.test(dfCardio$ap_hi[dfCardio$cardio == 0], dfCardio$ap_hi[dfCardio$cardio == 1])
-    output$ks_result <- renderPrint(ks_test_result)
   })
 }
 
