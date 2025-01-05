@@ -1,0 +1,225 @@
+library(shinydashboard)
+library(DT)
+library(httr)
+library(sentimentr)
+library(ggplot2)
+library(tm)
+library(wordcloud)
+library(RColorBrewer)
+library(syuzhet)
+
+# Chatbot logic with sentiment analysis and emotion detection
+ui <- dashboardPage(
+  dashboardHeader(title = "Chatbot with Sentiment Analysis"),
+  dashboardSidebar(disable = TRUE),
+  dashboardBody(
+    fluidRow(
+      box(
+        title = "Chatbot",
+        status = "primary",
+        solidHeader = TRUE,
+        textInput("userInput", "Type your message:", ""),
+        actionButton("generateBtn", "Send", class = "btn-primary"),
+        dataTableOutput("chatOutput"),
+        tags$style(HTML("#chatOutput { height: 400px; }"))
+      ),
+      box(
+        title = "Sentiment & Emotion Visualization",
+        status = "primary",
+        solidHeader = TRUE,
+        plotOutput("sentimentCountPlot"),
+        plotOutput("emotionCountPlot"),
+        plotOutput("sentimentScorePlot"),
+        plotOutput("sentimentLinePlot"),
+        plotOutput("cumulativeSentimentPlot")
+      ),
+      box(
+        title = "Word Cloud",
+        status = "primary",
+        solidHeader = TRUE,
+        plotOutput("wordCloudPlot")
+      )
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  # Initialize chat history
+  chat_history <- reactiveVal(data.frame(Role = character(), Message = character(), 
+                                          Sentiment = character(), Score = numeric(), 
+                                          Emotions = I(list()), stringsAsFactors = FALSE))
+
+  # Keep track of the number of responses
+  response_count <- reactiveVal(0)
+
+  # Generate content from chatbot and perform sentiment analysis
+  observeEvent(input$generateBtn, {
+    user_text <- input$userInput
+    api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ"  # Replace with your actual API key
+
+    if (user_text != "" && response_count() < 10) {
+      # Generate response based on user input
+      response <- generateContent(user_text, api_key)
+      
+      # Perform sentiment analysis on user input
+      user_sentiment_score <- sentimentr::sentiment(user_text)$sentiment
+      user_sentiment_label <- ifelse(mean(user_sentiment_score) > 0, "Positive", 
+                                      ifelse(mean(user_sentiment_score) < 0, "Negative", "Neutral"))
+      user_score <- min(max(mean(user_sentiment_score), -1), 1)
+
+      # Perform emotion detection on user input
+      user_emotions <- get_nrc_sentiment(user_text)
+      user_emotion_labels <- colnames(user_emotions)[which(user_emotions[1, ] > 0)]
+
+      # Perform sentiment analysis on the chatbot's response
+      sentiment_score <- sentimentr::sentiment(response)$sentiment
+      sentiment_label <- ifelse(mean(sentiment_score) > 0, "Positive", 
+                                ifelse(mean(sentiment_score) < 0, "Negative", "Neutral"))
+      response_score <- min(max(mean(sentiment_score), -1), 1)
+
+      # Perform emotion detection on chatbot's response
+      response_emotions <- get_nrc_sentiment(response)
+      response_emotion_labels <- colnames(response_emotions)[which(response_emotions[1, ] > 0)]
+
+      # Update chat history
+      updated_history <- rbind(chat_history(), 
+                               data.frame(Role = "User", Message = user_text, Sentiment = user_sentiment_label, 
+                                          Score = user_score, Emotions = I(list(user_emotion_labels)), 
+                                          stringsAsFactors = FALSE), 
+                               data.frame(Role = "Model", Message = response, Sentiment = sentiment_label, 
+                                          Score = response_score, Emotions = I(list(response_emotion_labels)), 
+                                          stringsAsFactors = FALSE))
+      chat_history(updated_history)
+
+      # Update response count
+      response_count(response_count() + 1)
+
+      # Render updated chat output
+      output$chatOutput <- renderDataTable({
+        DT::datatable(
+          chat_history(),
+          options = list(paging = FALSE, searching = FALSE),
+          rownames = FALSE,
+          class = 'cell-border stripe',
+          escape = FALSE
+        )
+      })
+      
+      # Render the sentiment count plot
+      output$sentimentCountPlot <- renderPlot({
+        sentiment_data <- data.frame(Sentiment = chat_history()$Sentiment)
+        ggplot(sentiment_data, aes(x = Sentiment, fill = Sentiment)) +
+          geom_bar(aes(y = ..count..), position="dodge") +
+          labs(title = "Sentiment Count Distribution", x = "Sentiment", y = "Count") +
+          theme_minimal()
+      })
+
+      # Render the emotion count plot
+      output$emotionCountPlot <- renderPlot({
+        emotions_list <- sapply(chat_history()$Emotions, function(x) table(factor(x, levels = c("anger", "anticipation", "disgust", "fear", "joy", "sadness", "surprise", "trust"))))
+        emotions_data <- as.data.frame(emotions_list)
+
+        # Check if emotions_data is empty before proceeding
+        if (nrow(emotions_data) > 0) {
+          emotion_counts <- colSums(emotions_data, na.rm = TRUE)
+          emotion_counts_df <- data.frame(Emotion = names(emotion_counts), Count = emotion_counts)
+
+          ggplot(emotion_counts_df, aes(x = Emotion, y = Count, fill = Emotion)) +
+            geom_bar(stat = "identity") +
+            labs(title = "Emotion Count Distribution", x = "Emotion", y = "Count") +
+            theme_minimal()
+        }
+      })
+
+      # Render the sentiment score plot
+      output$sentimentScorePlot <- renderPlot({
+        sentiment_data <- data.frame(Role = factor(chat_history()$Role), Score = chat_history()$Score)
+        ggplot(sentiment_data, aes(x = Role, y = Score, fill = Role)) +
+          geom_boxplot() +
+          labs(title = "Sentiment Scores by Role", x = "Role", y = "Sentiment Score") +
+          theme_minimal()
+      })
+
+      # Render the sentiment line plot
+      output$sentimentLinePlot <- renderPlot({
+        sentiment_scores <- data.frame(
+          Count = 1:nrow(chat_history()),
+          Score = chat_history()$Score
+        )
+        ggplot(sentiment_scores, aes(x = Count, y = Score)) +
+          geom_line(color = "blue") +
+          geom_point(size = 2, color = "red") +
+          labs(title = "Sentiment Score Trend", x = "Message Count", y = "Sentiment Score") +
+          theme_minimal()
+      })
+      
+      # Render the cumulative sentiment plot
+      output$cumulativeSentimentPlot <- renderPlot({
+        cumulative_scores <- cumsum(chat_history()$Score)
+        ggplot(data.frame(Count = 1:length(cumulative_scores), CumulativeScore = cumulative_scores), aes(x = Count, y = CumulativeScore)) +
+          geom_line(color = "green") +
+          geom_point(size = 2, color = "orange") +
+          labs(title = "Cumulative Sentiment Score Trend", x = "Message Count", y = "Cumulative Sentiment Score") +
+          theme_minimal()
+      })
+      
+      # Create and render the word cloud
+      output$wordCloudPlot <- renderPlot({
+        # Combine all messages into a single text corpus
+        messages <- paste(chat_history()$Message, collapse = " ")
+        messages_corpus <- Corpus(VectorSource(messages))
+        messages_corpus <- tm_map(messages_corpus, content_transformer(tolower))
+        messages_corpus <- tm_map(messages_corpus, removePunctuation)
+        messages_corpus <- tm_map(messages_corpus, removeNumbers)
+        messages_corpus <- tm_map(messages_corpus, removeWords, stopwords("en"))
+        
+        # Create a term-document matrix
+        tdm <- TermDocumentMatrix(messages_corpus)
+        matrix <- as.matrix(tdm)
+        word_freqs <- sort(rowSums(matrix), decreasing = TRUE)
+        word_freqs_df <- data.frame(word = names(word_freqs), freq = word_freqs)
+        
+        # Generate the word cloud
+        wordcloud(words = word_freqs_df$word, freq = word_freqs_df$freq, min.freq = 1, max.words = 100, random.order = FALSE, rot.per = 0.35, colors = brewer.pal(8, "Dark2"))
+      })
+      
+      updateTextInput(session, "userInput", value = "")
+    } else if (response_count() >= 10) {
+      # Display message if more than 10 responses have been entered
+      showModal(modalDialog(
+        title = "Limit Reached",
+        "You have entered 10 responses. The analysis is complete.",
+        easyClose = TRUE,
+        footer = NULL
+      ))
+    }
+  })
+}
+
+# Function to generate content (response from model)
+generateContent <- function(prompt, api_key) {
+  headers <- c(`Content-Type` = "application/json")
+  params <- list(`key` = api_key)
+  data <- sprintf('{"contents": [{"parts":[{"text": "%s"}]}]}', prompt)
+  res <- httr::POST(
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+    httr::add_headers(.headers = headers),
+    query = params,
+    body = data
+  )
+  
+  # Check if the response is valid and then return the results
+  if (httr::status_code(res) == 200) {
+    response_content <- httr::content(res)
+    if (length(response_content$candidates) > 0 && length(response_content$candidates[[1]]$content$parts) > 0) {
+      return(response_content$candidates[[1]]$content$parts[[1]]$text)
+    } else {
+      return("Error: No valid response content.")
+    }
+  } else {
+    return(paste("Error:", httr::status_code(res), httr::content(res, as = "text")))
+  }
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
