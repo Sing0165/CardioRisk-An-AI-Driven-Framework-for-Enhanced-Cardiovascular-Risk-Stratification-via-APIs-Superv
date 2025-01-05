@@ -1,10 +1,16 @@
-Complex and Messy Regulatory Network Visualizations of Health Data
 library(shiny)
 library(shinycssloaders)
 library(DT)
 library(tidyverse)
 library(visNetwork)
 library(igraph)
+library(ggplot2)
+library(PRROC)
+library(plotly)
+library(reshape2)
+
+# Assuming dfCardio is defined elsewhere in your code
+# dfCardio <- ... # Your actual data frame should be assigned here
 
 # Perform Differential Expression Analysis (DEA)
 perform_dea <- function(data) {
@@ -29,13 +35,50 @@ perform_dea <- function(data) {
   do.call(rbind, dea_results)
 }
 
-# Perform DEA on dfCardio
-# dfCardio should be defined here; use your actual data frame
-dea_results <- perform_dea(dfCardio)
-
-# Define UI for the Shiny app
+# Shiny App UI
 ui <- fluidPage(
-  titlePanel("Complex and Messy Regulatory Network Visualizations of Health Data"),
+  tags$head(
+    tags$style(HTML("
+      body {
+        font-family: 'Arial', sans-serif;
+        background-color: #f0f2f5;
+      }
+      .navbar {
+        background-color: #007bff;
+        color: white;
+      }
+      .navbar-brand {
+        color: white !important;
+      }
+      h4 {
+        color: #007bff;
+      }
+      .tab-pane {
+        padding: 20px;
+        border: 1px solid #007bff;
+        border-radius: 5px;
+        background-color: white;
+      }
+      .btn-primary {
+        background-color: #007bff;
+        border-color: #007bff;
+      }
+      .btn-primary:hover {
+        background-color: #0056b3;
+        border-color: #0056b3;
+      }
+      .highlight {
+        background-color: #d6e9f9;
+      }
+      .metric-title {
+        font-weight: bold;
+        font-size: 1.5em;
+        color: #007bff;
+      }
+    "))
+  ),
+  
+  titlePanel("Health Data Visualization and Model Comparison"),
   
   sidebarLayout(
     sidebarPanel(
@@ -43,9 +86,12 @@ ui <- fluidPage(
                          "Select Features for Network Analysis:", 
                          choices = c("age", "gender", "height", "weight", "ap_hi", "ap_lo", 
                                      "cholesterol", "gluc", "smoke", "alco", "active", "cardio"),
-                         selected = c("age", "gender", "cholesterol", "active"))
+                         selected = c("age", "gender", "cholesterol", "active")),
+      selectInput("metric", "Choose Metric", choices = c("Precision", "Recall", "F1 Score", "Accuracy")),
+      actionButton("showGraph", "Show Graph", class = "btn-primary"),
+      actionButton("showPRGraph", "Show 3D Precision-Recall Curve", class = "btn-primary"),
+      actionButton("showPR2DGraph", "Show 2D Precision-Recall Curve", class = "btn-primary")
     ),
-    
     mainPanel(
       tabsetPanel(
         tabPanel("Global Regulatory Network",
@@ -65,7 +111,23 @@ ui <- fluidPage(
         
         tabPanel("Clustering Coefficient Network",
                  h4("Clustering Coefficient Network Visualization"),
-                 visNetworkOutput("clustering_coefficient_network"))
+                 visNetworkOutput("clustering_coefficient_network")),
+        
+        tabPanel("Model Metrics",
+                 h4("Model Performance Metrics"),
+                 plotlyOutput("metricGraph", height = "600px")),
+        
+        tabPanel("Precision-Recall Curves",
+                 h4("3D Precision-Recall Curves"),
+                 plotlyOutput("prPlot3D", height = "600px")),
+        
+        tabPanel("Precision-Recall Curves 2D",
+                 h4("2D Precision-Recall Curves"),
+                 plotlyOutput("prPlot2D", height = "600px")),
+        
+        tabPanel("All Metrics Comparison",
+                 h4("Comparison of All Metrics Across Models"),
+                 plotlyOutput("allMetricsGraph", height = "600px"))
       )
     )
   )
@@ -73,6 +135,9 @@ ui <- fluidPage(
 
 # Define server logic
 server <- function(input, output, session) {
+  
+  # Helper function to perform DEA
+  dea_results <- perform_dea(dfCardio)
   
   # Helper function to create complex and messy regulatory networks
   create_messy_network <- function(data, threshold = 0.1, focus = NULL) {
@@ -146,7 +211,7 @@ server <- function(input, output, session) {
     class = "display", 
     rownames = FALSE)
   })
-
+  
   # Create and render ontology network visualization
   output$ontology_network <- renderVisNetwork({
     feature_names <- c("Age", "Height", "Weight", "Blood Pressure", "Cholesterol", "Glucose", "Activity Level", "Smoking", "Alcohol", "Cardiovascular Disease")
@@ -168,7 +233,7 @@ server <- function(input, output, session) {
       visPhysics(solver = "repulsion") %>%
       visLayout(randomSeed = 123)
   })
-
+  
   # Create and render clustering coefficient network visualization
   output$clustering_coefficient_network <- renderVisNetwork({
     selected_data <- dfCardio[, input$selected_features]
@@ -197,9 +262,145 @@ server <- function(input, output, session) {
       visPhysics(solver = "repulsion") %>%
       visLayout(randomSeed = 123)
   })
+  
+  # Load confusion matrices for model performance
+  logistic_regression <- c(TP = 4480, TN = 5493, FP = 2328, FN = 1455)
+  random_forest <- c(TP = 4595, TN = 5484, FP = 2213, FN = 1464)
+  knn <- c(TP = 4045, TN = 5290, FP = 2763, FN = 1658)
+  naive_bayes <- c(TP = 4045, TN = 5290, FP = 2763, FN = 1658)
+  decision_tree <- c(TP = 4462, TN = 5495, FP = 2346, FN = 1453)
+  
+  # Function to calculate precision-recall values using thresholds
+  calculate_pr_curve <- function(TP, FP, FN, TN, model_name) {
+    true_labels <- rep(c(1, 0), c(TP + FN, FP + TN) )  # True labels
+    predicted_scores <- c(rep(1, TP), rep(0, FP), rep(1, FN), rep(0, TN))  # Predicted probabilities
+  
+    # Calculate Precision-Recall curve
+    pr <- pr.curve(scores.class0 = predicted_scores[true_labels == 1], 
+                   scores.class1 = predicted_scores[true_labels == 0], 
+                   curve = TRUE)
+    
+    data.frame(
+      Recall = pr$curve[, 1], 
+      Precision = pr$curve[, 2], 
+      Threshold = pr$curve[, 3],
+      Model = model_name
+    )
+  }
+  
+  # Generate Precision-Recall data for each model
+  pr_data <- rbind(
+    calculate_pr_curve(logistic_regression["TP"], logistic_regression["FP"], 
+                       logistic_regression["FN"], logistic_regression["TN"], "Logistic Regression"),
+    calculate_pr_curve(random_forest["TP"], random_forest["FP"], 
+                       random_forest["FN"], random_forest["TN"], "Random Forest"),
+    calculate_pr_curve(knn["TP"], knn["FP"], 
+                       knn["FN"], knn["TN"], "KNN"),
+    calculate_pr_curve(naive_bayes["TP"], naive_bayes["FP"], 
+                       naive_bayes["FN"], naive_bayes["TN"], "Naive Bayes"),
+    calculate_pr_curve(decision_tree["TP"], decision_tree["FP"], 
+                       decision_tree["FN"], decision_tree["TN"], "Decision Tree")
+  )
+  
+  # Calculate accuracy for each model
+  accuracy <- c(
+    Logistic = (logistic_regression["TP"] + logistic_regression["TN"]) / sum(logistic_regression),
+    RandomForest = (random_forest["TP"] + random_forest["TN"]) / sum(random_forest),
+    KNN = (knn["TP"] + knn["TN"]) / sum(knn),
+    NaiveBayes = (naive_bayes["TP"] + naive_bayes["TN"]) / sum(naive_bayes),
+    DecisionTree = (decision_tree["TP"] + decision_tree["TN"]) / sum(decision_tree)
+  )
+  
+  # Map the accuracy values to the pr_data
+  pr_data$Accuracy <- factor(pr_data$Model, levels = names(accuracy))
+  pr_data$Accuracy <- accuracy[pr_data$Accuracy]
+  
+  # Define metrics for each model
+  metrics <- data.frame(
+    Model = c("Logistic Regression", "Random Forest", "KNN", "Naive Bayes", "Decision Tree"),
+    Precision = c(4480 / (4480 + 2328), 4595 / (4595 + 2213), 4045 / (4045 + 2763), 4045 / (4045 + 2763), 4462 / (4462 + 2346)),
+    Recall = c(4480 / (4480 + 1455), 4595 / (4595 + 1464), 4045 / (4045 + 1658), 4045 / (4045 + 1658), 4462 / (4462 + 1453)),
+    F1_Score = c(2 * (4480 / (4480 + 2328)) * (4480 / (4480 + 1455)) / ((4480 / (4480 + 2328)) + (4480 / (4480 + 1455))),
+                 2 * (4595 / (4595 + 2213)) * (4595 / (4595 + 1464)) / ((4595 / (4595 + 2213)) + (4595 / (4595 + 1464))),
+                 2 * (4045 / (4045 + 2763)) * (4045 / (4045 + 1658)) / ((4045 / (4045 + 2763)) + (4045 / (4045 + 1658))),
+                 2 * (4045 / (4045 + 2763)) * (4045 / (4045 + 1658)) / ((4045 / (4045 + 2763)) + (4045 / (4045 + 1658))),
+                 2 * (4462 / (4462 + 2346)) * (4462 / (4462 + 1453)) / ((4462 / (4462 + 2346)) + (4462 / (4462 + 1453)))
+    ),
+    Accuracy = accuracy
+  )
+  
+  output$prPlot3D <- renderPlotly({
+    plot_ly(pr_data, x = ~Recall, y = ~Precision, z = ~Threshold, color = ~Model, 
+            text = ~paste("Accuracy: ", round(Accuracy, 2)), 
+            type = "scatter3d", mode = "lines+markers", 
+            line = list(width = 2), marker = list(size = 5)) %>%
+      layout(
+        title = "3D Precision-Recall Curves with Accuracy",
+        scene = list(
+          xaxis = list(title = "Recall (True Positive Rate)", showgrid = TRUE, zeroline = FALSE),
+          yaxis = list(title = "Precision (Positive Predictive Value)", showgrid = TRUE, zeroline = FALSE),
+          zaxis = list(title = "Threshold", showgrid = TRUE, zeroline = FALSE)
+        ),
+        legend = list(title = list(text = "Model (Accuracy)"), 
+                      tracegroupgap = 5),
+        annotations = list(
+          list(
+            x = 0.5, y = 0.5, z = 0.5,
+            text = "Precision-Recall Curves",
+            showarrow = FALSE, font = list(size = 16, color = "black")
+          )
+        )
+      )
+  })
+  
+  output$prPlot2D <- renderPlotly({
+    req(input$showPR2DGraph)
+    
+    plot_ly(pr_data, x = ~Recall, y = ~Precision, color = ~Model, 
+            type = "scatter", mode = "lines+markers",
+            text = ~paste("Accuracy: ", round(Accuracy, 2)), 
+            marker = list(size = 5)) %>%
+      layout(
+        title = "2D Precision-Recall Curves",
+        xaxis = list(title = "Recall", showgrid = TRUE),
+        yaxis = list(title = "Precision", showgrid = TRUE),
+        legend = list(title = list(text = "Model (Accuracy)"))
+      )
+  })
+  
+  output$metricGraph <- renderPlotly({
+    req(input$showGraph)
+    metric_col <- switch(input$metric, "Precision" = "Precision", "Recall" = "Recall", "F1 Score" = "F1_Score", "Accuracy" = "Accuracy")
+    
+    plot_ly(metrics, x = ~Model, y = metrics[[metric_col]], type = "bar", color = metrics$Model, 
+            text = ~paste(metric_col, ": ", round(metrics[[metric_col]], 2)),
+            hoverinfo = "text") %>%
+      layout(
+        title = paste("Bar Graph of", input$metric),
+        xaxis = list(title = "Model", showgrid = TRUE, zeroline = FALSE),
+        yaxis = list(title = input$metric, showgrid = TRUE, zeroline = FALSE),
+        legend = list(title = list(text = "Model"))
+      )
+  })
+
+  output$allMetricsGraph <- renderPlotly({
+    metrics_long <- melt(metrics, id.vars = "Model", 
+                          measure.vars = c("Precision", "Recall", "F1_Score", "Accuracy"))
+    
+    plot_ly(metrics_long, x = ~Model, y = ~value, color = ~variable, type = 'bar', 
+            text = ~paste(variable, ": ", round(value, 2)),
+            hoverinfo = "text") %>%
+      layout(
+        title = "Comparison of All Metrics Across Models",
+        xaxis = list(title = "Model", showgrid = TRUE),
+        yaxis = list(title = "Value", showgrid = TRUE),
+        barmode = 'group'
+      )
+  })
 }
 
 # Run the application
 shinyApp(ui = ui, server = server)
+
 
 
