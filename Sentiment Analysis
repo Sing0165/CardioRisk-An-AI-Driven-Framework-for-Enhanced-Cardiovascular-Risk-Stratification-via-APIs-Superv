@@ -1,3 +1,4 @@
+library(shiny)
 library(shinydashboard)
 library(DT)
 library(httr)
@@ -10,35 +11,78 @@ library(syuzhet)
 
 # Chatbot logic with sentiment analysis and emotion detection
 ui <- dashboardPage(
-  dashboardHeader(title = "Chatbot with Sentiment Analysis"),
-  dashboardSidebar(disable = TRUE),
+  dashboardHeader(title = "Chatbot with Sentiment Analysis", titleWidth = 300),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Chat", tabName = "chat", icon = icon("comments")),
+      menuItem("Sentiment & Emotion", tabName = "sentiment_emotion", icon = icon("chart-line")),
+      menuItem("Word Cloud", tabName = "word_cloud", icon = icon("cloud")),
+      menuItem("Emotion Score Consistency", tabName = "emotion_consistency", icon = icon("balance-scale")),
+      menuItem("Emotion Detection Accuracy", tabName = "emotion_accuracy", icon = icon("check-square"))
+    ),
+    width = 250
+  ),
   dashboardBody(
-    fluidRow(
-      box(
-        title = "Chatbot",
-        status = "primary",
-        solidHeader = TRUE,
-        textInput("userInput", "Type your message:", ""),
-        actionButton("generateBtn", "Send", class = "btn-primary"),
-        dataTableOutput("chatOutput"),
-        tags$style(HTML("#chatOutput { height: 400px; }"))
+    tags$head(
+      tags$style(HTML("
+        .box {
+          border-radius: 10px;
+        }
+        .content-wrapper {
+          background: #f4f6f9;
+        }
+        .shiny-input-container {
+          margin-bottom: 10px;
+        }
+      "))
+    ),
+    tabItems(
+      tabItem(tabName = "chat",
+              fluidRow(
+                box(
+                  title = "Chatbot", width = 12, status = "primary", solidHeader = TRUE,
+                  textInput("userInput", "Type your message:", ""),
+                  actionButton("generateBtn", "Send",
+                               class = "btn-primary btn-lg",
+                               style = "width: 100%;"),
+                  dataTableOutput("chatOutput"),
+                  tags$style(HTML("#chatOutput { height: 400px; }"))
+                )
+              )
       ),
-      box(
-        title = "Sentiment & Emotion Visualization",
-        status = "primary",
-        solidHeader = TRUE,
-        plotOutput("sentimentCountPlot"),
-        plotOutput("emotionCountPlot"),
-        plotOutput("sentimentScorePlot"),
-        plotOutput("sentimentLinePlot"),
-        plotOutput("cumulativeSentimentPlot")
+      tabItem(tabName = "sentiment_emotion",
+              fluidRow(
+                box(
+                  title = "Sentiment & Emotion Visualization", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("sentimentCountPlot", height = "300px"),
+                  plotOutput("emotionCountPlot", height = "300px"),
+                  plotOutput("sentimentScorePlot", height = "300px"),
+                  plotOutput("sentimentLinePlot", height = "300px"),
+                  plotOutput("cumulativeSentimentPlot", height = "300px")
+                )
+              )
       ),
-      box(
-        title = "Word Cloud",
-        status = "primary",
-        solidHeader = TRUE,
-        plotOutput("wordCloudPlot")
-      )
+      tabItem(tabName = "word_cloud",
+              fluidRow(
+                box(
+                  title = "Word Cloud", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("wordCloudPlot", height = "600px")
+                )
+              )),
+      tabItem(tabName = "emotion_consistency",
+              fluidRow(
+                box(
+                  title = "Emotion Score Consistency", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("emotionConsistencyPlot", height = "300px")
+                )
+              )),
+      tabItem(tabName = "emotion_accuracy",
+              fluidRow(
+                box(
+                  title = "Emotion Detection Accuracy", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("confusionMatrixPlot", height = "300px")
+                )
+              ))
     )
   )
 )
@@ -46,17 +90,28 @@ ui <- dashboardPage(
 server <- function(input, output, session) {
   # Initialize chat history
   chat_history <- reactiveVal(data.frame(Role = character(), Message = character(), 
-                                          Sentiment = character(), Score = numeric(), 
-                                          Emotions = I(list()), stringsAsFactors = FALSE))
-
+                                         Sentiment = character(), Score = numeric(), 
+                                         Emotion = character(), stringsAsFactors = FALSE))
+  
   # Keep track of the number of responses
   response_count <- reactiveVal(0)
-
+  
+  # Function to calculate accuracy metrics
+  calculate_accuracy <- function() {
+    if (nrow(chat_history()) > 1) {
+      confusion_matrix <- table(Actual = chat_history()$Emotion[chat_history()$Role == "User"],
+                                 Predicted = chat_history()$Emotion[chat_history()$Role == "Model"])
+      return(confusion_matrix)
+    } else {
+      return(NULL)
+    }
+  }
+  
   # Generate content from chatbot and perform sentiment analysis
   observeEvent(input$generateBtn, {
     user_text <- input$userInput
     api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ"  # Replace with your actual API key
-
+    
     if (user_text != "" && response_count() < 10) {
       # Generate response based on user input
       response <- generateContent(user_text, api_key)
@@ -66,34 +121,36 @@ server <- function(input, output, session) {
       user_sentiment_label <- ifelse(mean(user_sentiment_score) > 0, "Positive", 
                                       ifelse(mean(user_sentiment_score) < 0, "Negative", "Neutral"))
       user_score <- min(max(mean(user_sentiment_score), -1), 1)
-
+      
       # Perform emotion detection on user input
       user_emotions <- get_nrc_sentiment(user_text)
-      user_emotion_labels <- colnames(user_emotions)[which(user_emotions[1, ] > 0)]
-
+      user_emotion_index <- which(user_emotions[1, ] == max(user_emotions[1, ]))
+      user_emotion_label <- if (length(user_emotion_index) > 0) colnames(user_emotions)[user_emotion_index[1]] else NA
+      
       # Perform sentiment analysis on the chatbot's response
       sentiment_score <- sentimentr::sentiment(response)$sentiment
       sentiment_label <- ifelse(mean(sentiment_score) > 0, "Positive", 
                                 ifelse(mean(sentiment_score) < 0, "Negative", "Neutral"))
       response_score <- min(max(mean(sentiment_score), -1), 1)
-
+      
       # Perform emotion detection on chatbot's response
       response_emotions <- get_nrc_sentiment(response)
-      response_emotion_labels <- colnames(response_emotions)[which(response_emotions[1, ] > 0)]
-
+      response_emotion_index <- which(response_emotions[1, ] == max(response_emotions[1, ]))
+      response_emotion_label <- if (length(response_emotion_index) > 0) colnames(response_emotions)[response_emotion_index[1]] else NA
+      
       # Update chat history
       updated_history <- rbind(chat_history(), 
                                data.frame(Role = "User", Message = user_text, Sentiment = user_sentiment_label, 
-                                          Score = user_score, Emotions = I(list(user_emotion_labels)), 
+                                          Score = user_score, Emotion = user_emotion_label, 
                                           stringsAsFactors = FALSE), 
                                data.frame(Role = "Model", Message = response, Sentiment = sentiment_label, 
-                                          Score = response_score, Emotions = I(list(response_emotion_labels)), 
+                                          Score = response_score, Emotion = response_emotion_label, 
                                           stringsAsFactors = FALSE))
       chat_history(updated_history)
-
+      
       # Update response count
       response_count(response_count() + 1)
-
+      
       # Render updated chat output
       output$chatOutput <- renderDataTable({
         DT::datatable(
@@ -111,35 +168,32 @@ server <- function(input, output, session) {
         ggplot(sentiment_data, aes(x = Sentiment, fill = Sentiment)) +
           geom_bar(aes(y = ..count..), position="dodge") +
           labs(title = "Sentiment Count Distribution", x = "Sentiment", y = "Count") +
-          theme_minimal()
+          theme_minimal() + theme(legend.position = "bottom")
       })
-
+      
       # Render the emotion count plot
       output$emotionCountPlot <- renderPlot({
-        emotions_list <- sapply(chat_history()$Emotions, function(x) table(factor(x, levels = c("anger", "anticipation", "disgust", "fear", "joy", "sadness", "surprise", "trust"))))
-        emotions_data <- as.data.frame(emotions_list)
-
-        # Check if emotions_data is empty before proceeding
-        if (nrow(emotions_data) > 0) {
-          emotion_counts <- colSums(emotions_data, na.rm = TRUE)
-          emotion_counts_df <- data.frame(Emotion = names(emotion_counts), Count = emotion_counts)
-
-          ggplot(emotion_counts_df, aes(x = Emotion, y = Count, fill = Emotion)) +
+        emotions_list <- table(chat_history()$Emotion)
+        emotion_counts_df <- data.frame(Emotion = names(emotions_list), Count = as.numeric(emotions_list))
+        
+        # Render the plot only if there are emotions counted
+        if (nrow(emotion_counts_df) > 0) {
+          ggplot(emotion_counts_df, aes(x = reorder(Emotion, -Count), y = Count, fill = Emotion)) +
             geom_bar(stat = "identity") +
             labs(title = "Emotion Count Distribution", x = "Emotion", y = "Count") +
-            theme_minimal()
+            theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
         }
       })
-
+      
       # Render the sentiment score plot
       output$sentimentScorePlot <- renderPlot({
         sentiment_data <- data.frame(Role = factor(chat_history()$Role), Score = chat_history()$Score)
         ggplot(sentiment_data, aes(x = Role, y = Score, fill = Role)) +
           geom_boxplot() +
           labs(title = "Sentiment Scores by Role", x = "Role", y = "Sentiment Score") +
-          theme_minimal()
+          theme_minimal() + theme(legend.position = "bottom")
       })
-
+      
       # Render the sentiment line plot
       output$sentimentLinePlot <- renderPlot({
         sentiment_scores <- data.frame(
@@ -163,26 +217,6 @@ server <- function(input, output, session) {
           theme_minimal()
       })
       
-      # Create and render the word cloud
-      output$wordCloudPlot <- renderPlot({
-        # Combine all messages into a single text corpus
-        messages <- paste(chat_history()$Message, collapse = " ")
-        messages_corpus <- Corpus(VectorSource(messages))
-        messages_corpus <- tm_map(messages_corpus, content_transformer(tolower))
-        messages_corpus <- tm_map(messages_corpus, removePunctuation)
-        messages_corpus <- tm_map(messages_corpus, removeNumbers)
-        messages_corpus <- tm_map(messages_corpus, removeWords, stopwords("en"))
-        
-        # Create a term-document matrix
-        tdm <- TermDocumentMatrix(messages_corpus)
-        matrix <- as.matrix(tdm)
-        word_freqs <- sort(rowSums(matrix), decreasing = TRUE)
-        word_freqs_df <- data.frame(word = names(word_freqs), freq = word_freqs)
-        
-        # Generate the word cloud
-        wordcloud(words = word_freqs_df$word, freq = word_freqs_df$freq, min.freq = 1, max.words = 100, random.order = FALSE, rot.per = 0.35, colors = brewer.pal(8, "Dark2"))
-      })
-      
       updateTextInput(session, "userInput", value = "")
     } else if (response_count() >= 10) {
       # Display message if more than 10 responses have been entered
@@ -192,6 +226,67 @@ server <- function(input, output, session) {
         easyClose = TRUE,
         footer = NULL
       ))
+    }
+  })
+  
+  # Create and render the word cloud
+  output$wordCloudPlot <- renderPlot({
+    # Combine all messages into a single text corpus
+    messages <- paste(chat_history()$Message, collapse = " ")
+    messages_corpus <- Corpus(VectorSource(messages))
+    messages_corpus <- tm_map(messages_corpus, content_transformer(tolower))
+    messages_corpus <- tm_map(messages_corpus, removePunctuation)
+    messages_corpus <- tm_map(messages_corpus, removeNumbers)
+    messages_corpus <- tm_map(messages_corpus, removeWords, stopwords("en"))
+    
+    # Create a term-document matrix
+    tdm <- TermDocumentMatrix(messages_corpus)
+    matrix <- as.matrix(tdm)
+    word_freqs <- sort(rowSums(matrix), decreasing = TRUE)
+    word_freqs_df <- data.frame(word = names(word_freqs), freq = word_freqs)
+    
+    # Generate the word cloud
+    wordcloud(words = word_freqs_df$word, freq = word_freqs_df$freq, min.freq = 1, max.words = 100, random.order = FALSE, rot.per = 0.35, colors = brewer.pal(8, "Dark2"))
+  })
+  
+  # Render the Emotion Score Consistency plot
+  output$emotionConsistencyPlot <- renderPlot({
+    if (nrow(chat_history()) > 1) {
+      consistency_data <- data.frame(
+        UserEmotion = chat_history()$Emotion[chat_history()$Role == "User"],
+        ModelEmotion = chat_history()$Emotion[chat_history()$Role == "Model"]
+      )
+      
+      # Convert emotions to a factor
+      consistency_data <- na.omit(consistency_data)
+      consistency_data$UserEmotion <- factor(consistency_data$UserEmotion)
+      
+      ggplot(consistency_data, aes(x = UserEmotion, fill = ModelEmotion)) +
+        geom_bar(position = "fill") +
+        labs(title = "Model Response Emotion Consistency", x = "User Emotion", y = "Proportion") +
+        theme_minimal() + theme(legend.position = "right")
+    } else {
+      # If there's not enough data, show a placeholder message
+      plot.new()
+      text(0.5, 0.5, "Not enough data to display consistency.", cex = 1.5)
+    }
+  })
+  
+  # Render the Confusion Matrix for Emotion Detection
+  output$confusionMatrixPlot <- renderPlot({
+    confusion_matrix <- calculate_accuracy()
+    
+    if (!is.null(confusion_matrix)) {
+      ggplot(as.data.frame(confusion_matrix), aes(x = Actual, y = Predicted)) +
+        geom_tile(aes(fill = Freq), color = "white") +
+        scale_fill_gradient(low = "white", high = "blue") +
+        geom_text(aes(label = Freq), vjust = 1) +
+        labs(title = "Confusion Matrix for Emotion Detection", x = "Actual Emotion", y = "Predicted Emotion") +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    } else {
+      plot.new()
+      text(0.5, 0.5, "Not enough data to display the confusion matrix.", cex = 1.5)
     }
   })
 }
