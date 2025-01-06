@@ -9,11 +9,16 @@ library(wordcloud)
 library(RColorBrewer)
 library(syuzhet)
 
+# Use your dfCardio dataset (assuming it's pre-loaded)
+# dfCardio <- read.csv("path_to_your_dfCardio.csv")  # Uncomment and adapt to load your dataset
+
 # Chatbot logic with sentiment analysis and emotion detection
 ui <- dashboardPage(
   dashboardHeader(title = "Chatbot with Sentiment Analysis", titleWidth = 300),
   dashboardSidebar(
     sidebarMenu(
+      menuItem("Introduction", tabName = "introduction", icon = icon("info-circle")),
+      menuItem("CVD Questions", tabName = "cvd_questions", icon = icon("question-circle")),
       menuItem("Chat", tabName = "chat", icon = icon("comments")),
       menuItem("Sentiment & Emotion", tabName = "sentiment_emotion", icon = icon("chart-line")),
       menuItem("Word Cloud", tabName = "word_cloud", icon = icon("cloud")),
@@ -37,6 +42,29 @@ ui <- dashboardPage(
       "))
     ),
     tabItems(
+      tabItem(tabName = "introduction",
+              fluidRow(
+                box(
+                  title = "Cardiovascular Health Overview", width = 12, status = "primary", solidHeader = TRUE,
+                  p("The dfCardio dataset includes key features such as age, cholesterol levels, and blood pressure, which can be influential in predicting anxiety and stress related to cardiovascular disease progression."),
+                  p("These emotional states may be inferred based on certain physical indicators and social history."),
+                  dataTableOutput("cardioData")
+                )
+              )
+      ),
+      tabItem(tabName = "cvd_questions",
+              fluidRow(
+                box(
+                  title = "CVD Personal Questions", width = 12, status = "primary", solidHeader = TRUE,
+                  actionButton("generateQuestionsBtn", "Do you want to answer 10 questions?", 
+                               class = "btn-success btn-lg", style = "width: 100%;"),
+                  textOutput("currentQuestion"),
+                  textInput("answerInput", "Your answer:", ""),
+                  actionButton("nextQuestionBtn", "Next Question", 
+                               class = "btn-success btn-lg", style = "width: 100%;")
+                )
+              )
+      ),
       tabItem(tabName = "chat",
               fluidRow(
                 box(
@@ -88,14 +116,38 @@ ui <- dashboardPage(
 )
 
 server <- function(input, output, session) {
+  # Display dfCardio dataset
+  output$cardioData <- renderDataTable({
+    DT::datatable(
+      dfCardio,
+      options = list(paging = TRUE, searching = TRUE),
+      rownames = FALSE,
+      class = 'cell-border stripe',
+      escape = FALSE
+    )
+  })
+
   # Initialize chat history
-  chat_history <- reactiveVal(data.frame(Role = character(), Message = character(), 
-                                         Sentiment = character(), Score = numeric(), 
+  chat_history <- reactiveVal(data.frame(Role = character(), Message = character(),
+                                         Sentiment = character(), Score = numeric(),
                                          Emotion = character(), stringsAsFactors = FALSE))
-  
+
   # Keep track of the number of responses
   response_count <- reactiveVal(0)
+
+  # Initialize CVD questions
+  cvd_questions <- reactiveVal(NULL)
+  current_question_index <- reactiveVal(1)
   
+  # Log for when questions should be generated
+  generate_questions <- reactiveVal(FALSE)
+
+  # Function to generate CVD Questions
+  generateCVDQuestions <- function(api_key) {
+    prompt <- "Generate 10 personalized questions related to ID, AGE, SYSTOLIC, DIASTOLIC BP, SMOKING, DRINKING, CHOLESTROL, GLUCOSE, AND IF U ARE ACTIVE."
+    return(unlist(strsplit(generateContent(prompt, api_key), "\n")))
+  }
+
   # Function to calculate accuracy metrics
   calculate_accuracy <- function() {
     if (nrow(chat_history()) > 1) {
@@ -106,7 +158,7 @@ server <- function(input, output, session) {
       return(NULL)
     }
   }
-  
+
   # Generate content from chatbot and perform sentiment analysis
   observeEvent(input$generateBtn, {
     user_text <- input$userInput
@@ -161,7 +213,7 @@ server <- function(input, output, session) {
           escape = FALSE
         )
       })
-      
+
       # Render the sentiment count plot
       output$sentimentCountPlot <- renderPlot({
         sentiment_data <- data.frame(Sentiment = chat_history()$Sentiment)
@@ -226,6 +278,51 @@ server <- function(input, output, session) {
         easyClose = TRUE,
         footer = NULL
       ))
+    }
+  })
+
+  # Start generating questions based on user input
+  observeEvent(input$generateQuestionsBtn, {
+    api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ" # Replace with your API key
+    if (!generate_questions()) {
+      cvd_questions(generateCVDQuestions(api_key))
+      generate_questions(TRUE)
+      current_question_index(1)
+
+      # Initial question display
+      output$currentQuestion <- renderText({
+        cvd_questions()[current_question_index()]
+      })
+    } else {
+      showModal(modalDialog(
+        title = "Questions Already Generated",
+        "You have already chosen to answer the questions.",
+        easyClose = TRUE,
+        footer = NULL
+      ))
+    }
+  })
+  
+  # Get the next question
+  observeEvent(input$nextQuestionBtn, {
+    if (generate_questions()) {
+      answer <- input$answerInput
+      
+      if (answer != "") {
+        # Process the answer - for now just printing to console
+        print(paste("User answered: ", answer))
+        current_question_index(current_question_index() + 1)
+        updateTextInput(session, "answerInput", value = "")
+      }
+      
+      # Update the question to display
+      output$currentQuestion <- renderText({
+        if (current_question_index() <= length(cvd_questions())) {
+          cvd_questions()[current_question_index()]
+        } else {
+          "Thank you for answering the questions!"
+        }
+      })
     }
   })
   
