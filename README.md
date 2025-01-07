@@ -1,3 +1,6 @@
+Question:
+How can a multi-faceted approach that combines the strengths of logistic regression, random forests, naive Bayes, and neural networks, alongside sentiment analysis from health chatbots/external APIs, and enhanced through dimensionality reduction techniques like PCA and t-SNE, result in an innovative framework for identifying predictors of cardiovascular disease? Additionally, how can clustering techniques be employed to categorize patients based on risk profiles, thereby informing tailored intervention strategies? 
+
 ### Abstract
 
 Cardiovascular diseases (CVD) are a leading cause of morbidity and mortality globally, necessitating the development of innovative diagnostic and predictive tools. This project presents a comprehensive and interactive dashboard leveraging advanced machine learning techniques to predict and analyze cardiovascular disease risk. Our approach integrates state-of-the-art algorithms, including Logistic Regression, Random Forest, Decision Trees, K-Nearest Neighbors (KNN), and Naive Bayes, evaluated against a well-curated dataset derived from the UCI Heart Disease repository. The primary aim is to facilitate a deeper understanding of patient demographics, assess the impact of various health indicators, and propose actionable healthcare solutions.
