@@ -176,7 +176,15 @@ ui <- fluidPage(
         
         tabPanel("All Metrics Comparison",
                  h4("Comparison of All Metrics Across Models"),
-                 plotlyOutput("allMetricsGraph", height = "600px"))
+                 plotlyOutput("allMetricsGraph", height = "600px")),
+        
+        # New PCA Visualization Tab
+        tabPanel("3D PCA Visualization",
+                 h4("3D PCA Visualizations"),
+                 plotlyOutput("pcaPlot1", height = "600px"),
+                 plotlyOutput("pcaPlot2", height = "600px"),
+                 plotlyOutput("pcaPlot3", height = "600px")
+        )
       )
     )
   )
@@ -446,8 +454,52 @@ server <- function(input, output, session) {
         barmode = 'group'
       )
   })
+  
+  # PCA visualization
+  perform_pca <- function(data) {
+    pca_res <- prcomp(data, center = TRUE, scale. = TRUE)
+    pca_data <- as.data.frame(pca_res$x[, 1:3])  # Taking the first three principal components
+    pca_data$cardio <- data$cardio  # Adding the target variable for color encoding
+    return(pca_data)
+  }
+  
+  # Render multiple PCA plots
+  pca_data <- perform_pca(dfCardio[, sapply(dfCardio, is.numeric)])  # Numeric columns only
+  
+  # PCA Plot 1
+  output$pcaPlot1 <- renderPlotly({
+    plot_ly(pca_data, x = ~PC1, y = ~PC2, z = ~PC3, color = ~cardio, 
+            colors = c('blue', 'red'), 
+            type = 'scatter3d', mode = 'markers', 
+            marker = list(size = 3)) %>%
+      layout(title = "PCA Visualization: PC1 vs PC2 vs PC3",
+             scene = list(xaxis = list(title = "Principal Component 1"), 
+                          yaxis = list(title = "Principal Component 2"), 
+                          zaxis = list(title = "Principal Component 3")))
+  })
+  
+  # PCA Plot 2 (example with different aesthetics)
+  output$pcaPlot2 <- renderPlotly({
+    plot_ly(pca_data, x = ~PC1, y = ~PC2, z = ~PC3, color = ~cardio, 
+            colors = c('green', 'orange'), 
+            type = 'scatter3d', mode = 'markers', 
+            marker = list(size = 5, line = list(width = 0.5, color = 'black'))) %>%
+      layout(title = "PCA Visualization Variant: PC1 vs PC2 vs PC3 with different colors",
+             scene = list(xaxis = list(title = "Principal Component 1"), 
+                          yaxis = list(title = "Principal Component 2"), 
+                          zaxis = list(title = "Principal Component 3")))
+  })
+  
+  # PCA Plot 3 (example with different color scheme)
+  output$pcaPlot3 <- renderPlotly({
+    plot_ly(pca_data, x = ~PC1, y = ~PC2, color = ~cardio, 
+            type = 'scatter', mode = 'markers', 
+            marker = list(size = 5, color = ~cardio)) %>%
+      layout(title = "2D PCA Visualization: PC1 vs PC2",
+             xaxis = list(title = "Principal Component 1"),
+             yaxis = list(title = "Principal Component 2"))
+  })
 }
 
 # Run the application
 shinyApp(ui = ui, server = server)
-
