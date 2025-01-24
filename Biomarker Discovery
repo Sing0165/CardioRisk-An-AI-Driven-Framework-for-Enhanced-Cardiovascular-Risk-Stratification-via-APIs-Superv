@@ -168,7 +168,7 @@ ui <- fluidPage(
       actionButton("showPRGraph", "Show 3D Precision-Recall Curve", class = "btn-primary"),
       actionButton("showPR2DGraph", "Show 2D Precision-Recall Curve", class = "btn-primary"),
       actionButton("simulateTrajectory", "Simulate Lifespan Risk Trajectory", class = "btn-primary"),
-      actionButton("run_multivariable_regression", "Run Multivariable Regression", class = "btn-primary")
+      actionButton("run_regression", "Run Multivariable Regression & Statistical Tests", class = "btn-primary")
     ),
     
     mainPanel(
@@ -242,7 +242,6 @@ ui <- fluidPage(
                  fluidRow(
                    column(6,
                      box(title = "ANOVA", status = "primary", solidHeader = TRUE,
-                         actionButton("run_anova_test", "Run ANOVA"),
                          verbatimTextOutput("anova_result"),
                          DTOutput("anova_table"))
                    ),
@@ -674,66 +673,6 @@ server <- function(input, output, session) {
     })
   })
   
-  observeEvent(input$run_anova_test, {
-    anova_result <- aov(age ~ cardio, data = dfCardio)
-    output$anova_result <- renderPrint({
-      summary(anova_result)
-    })
-
-    anova_table <- summary(anova_result)[[1]]
-    output$anova_table <- renderDT({
-      datatable(as.data.frame(anova_table), options = list(pageLength = 5, autoWidth = TRUE))
-    })
-  })
-
-  observeEvent(input$run_mann_whitney, {
-    mann_whitney_result <- wilcox.test(dfCardio$age ~ dfCardio$cardio)
-    output$mann_whitney_result <- renderPrint({
-      mann_whitney_result
-    })
-
-    mw_table <- data.frame(
-      W = mann_whitney_result$statistic,
-      p_value = mann_whitney_result$p.value,
-      alternative = mann_whitney_result$alternative
-    )
-    output$mann_whitney_table <- renderDT({
-      datatable(mw_table, options = list(pageLength = 5, autoWidth = TRUE))
-    })
-  })
-
-  observeEvent(input$run_kruskal_test, {
-    kruskal_result <- kruskal.test(age ~ cardio, data = dfCardio)
-    output$kruskal_result <- renderPrint({
-      kruskal_result
-    })
-
-    kruskal_table <- data.frame(
-      Kruskal_Wallis_Statistic = kruskal_result$statistic,
-      p_value = kruskal_result$p.value,
-      df = kruskal_result$parameter
-    )
-    output$kruskal_table <- renderDT({
-      datatable(kruskal_table, options = list(pageLength = 5, autoWidth = TRUE))
-    })
-  })
-
-  observeEvent(input$run_ks_test, {
-    ks_result <- ks.test(dfCardio$age[dfCardio$cardio == 0], dfCardio$age[dfCardio$cardio == 1])
-    output$ks_result <- renderPrint({
-      ks_result
-    })
-
-    ks_table <- data.frame(
-      D_statistic = ks_result$statistic,
-      p_value = ks_result$p.value,
-      alternative = ks_result$alternative
-    )
-    output$ks_table <- renderDT({
-      datatable(ks_table, options = list(pageLength = 5, autoWidth = TRUE))
-    })
-  })
-
   observeEvent(input$run_manova_test, {
     manova_result <- manova(cbind(ap_hi, ap_lo, gluc) ~ cardio + smoke + active, data = dfCardio)
     output$manova_result <- renderPrint({
@@ -746,29 +685,7 @@ server <- function(input, output, session) {
     })
   })
 
-  observeEvent(input$run_path_analysis, {
-    # Placeholder for actual path analysis implementation
-    path_analysis_result <- "Path Analysis results would go here."
-    output$path_analysis_result <- renderPrint({
-      path_analysis_result
-    })
-
-    # This is an example placeholder for the table output. Ideally, replace this with a real analysis.
-    path_analysis_table <- data.frame(
-      Variable1 = c("Smoking", "Diet", "Activity Level"),
-      Variable2 = c("CVD", "CVD", "CVD"),
-      Direct_Effect = c(0.3, -0.5, 0.2),
-      Indirect_Effect = c(0.1, 0.2, -0.1),
-      Total_Effect = c(0.4, -0.3, 0.1)
-    )
-    
-    output$path_analysis_table <- renderDT({
-      datatable(path_analysis_table, options = list(pageLength = 5, autoWidth = TRUE))
-    })
-  })
-
-  # Multivariable Regression
-  observeEvent(input$run_multivariable_regression, {
+  observeEvent(input$run_regression, {
     # Define and fit the multivariable logistic regression model
     multi_model <- glm(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, 
                        data = dfCardio, family = binomial)
@@ -778,13 +695,21 @@ server <- function(input, output, session) {
       summary(multi_model)
     })
     
-    # Create a results table
+    # Perform ANOVA on the logistic regression model
+    anova_model <- anova(multi_model, test = "Chisq")
+    output$anova_result <- renderPrint({
+      anova_model
+    })
+
+    anova_table <- as.data.frame(anova_model)
+
+    # Create a results table for regression coefficients
     regression_summary <- summary(multi_model)$coefficients
     regression_table <- as.data.frame(regression_summary) %>%
       rownames_to_column("Variable") %>%
       rename(Estimate = Estimate, Std_Error = `Std. Error`, z_value = `z value`, P_Value = `Pr(>|z|)`) %>%
-      mutate(Significant = P_Value < 0.05)
-    
+      mutate(Significant = ifelse(P_Value < 0.05, "Yes", "No"))
+
     # Render the regression results table
     output$multivariable_regression_table <- renderDT({
       datatable(regression_table, options = list(pageLength = 10, autoWidth = TRUE))
@@ -793,4 +718,4 @@ server <- function(input, output, session) {
 }
 
 # Run the application
-shinyApp(ui = ui, server = server)
+shinyApp(ui = ui, server = server) 
