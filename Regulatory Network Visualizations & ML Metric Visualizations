@@ -12,8 +12,6 @@ library(reshape2)
 # Assuming dfCardio is defined elsewhere in your code
 # dfCardio <- ... # Your actual data frame should be assigned here
 
-# Assuming your dfCardio data frame is defined here
-
 # Perform Differential Expression Analysis (DEA)
 perform_dea <- function(data) {
   features <- data %>% select(age, height, weight, ap_hi, ap_lo, gluc)  # Excluded cholesterol
@@ -125,6 +123,12 @@ ui <- fluidPage(
       .plotly {
         margin: 20px 0;
       }
+      .box {
+        background: #f9f9f9;
+        border: 1px solid #007bff;
+        padding: 15px;
+        margin-bottom: 15px;
+      }
     "))
   ),
   
@@ -235,6 +239,24 @@ ui <- fluidPage(
                          actionButton("run_ks_test", "Run Kolmogorov-Smirnov Test"),
                          verbatimTextOutput("ks_result"),
                          DTOutput("ks_table"))
+                   )
+                 ),
+                 fluidRow(
+                   column(12,
+                     box(title = "Multivariate Analysis of Variance (MANOVA)", 
+                         status = "primary", solidHeader = TRUE,
+                         actionButton("run_manova_test", "Run MANOVA"),
+                         verbatimTextOutput("manova_result"),
+                         DTOutput("manova_table"))
+                   )
+                 ),
+                 fluidRow(
+                   column(12,
+                     box(title = "Path Analysis", 
+                         status = "primary", solidHeader = TRUE,
+                         actionButton("run_path_analysis", "Run Path Analysis"),
+                         verbatimTextOutput("path_analysis_result"),
+                         DTOutput("path_analysis_table"))
                    )
                  )
         )
@@ -664,6 +686,39 @@ server <- function(input, output, session) {
     )
     output$ks_table <- renderDT({
       datatable(ks_table, options = list(pageLength = 5, autoWidth = TRUE))
+    })
+  })
+
+  observeEvent(input$run_manova_test, {
+    manova_result <- manova(cbind(ap_hi, ap_lo, gluc) ~ cardio + smoke + active, data = dfCardio)
+    output$manova_result <- renderPrint({
+      summary(manova_result)
+    })
+
+    manova_table <- summary(manova_result)
+    output$manova_table <- renderDT({
+      datatable(as.data.frame(manova_table), options = list(pageLength = 5, autoWidth = TRUE))
+    })
+  })
+
+  observeEvent(input$run_path_analysis, {
+    # Placeholder for actual path analysis implementation
+    path_analysis_result <- "Path Analysis results would go here."
+    output$path_analysis_result <- renderPrint({
+      path_analysis_result
+    })
+
+    # This is an example placeholder for the table output. Ideally, replace this with a real analysis.
+    path_analysis_table <- data.frame(
+      Variable1 = c("Smoking", "Diet", "Activity Level"),
+      Variable2 = c("CVD", "CVD", "CVD"),
+      Direct_Effect = c(0.3, -0.5, 0.2),
+      Indirect_Effect = c(0.1, 0.2, -0.1),
+      Total_Effect = c(0.4, -0.3, 0.1)
+    )
+    
+    output$path_analysis_table <- renderDT({
+      datatable(path_analysis_table, options = list(pageLength = 5, autoWidth = TRUE))
     })
   })
 }
