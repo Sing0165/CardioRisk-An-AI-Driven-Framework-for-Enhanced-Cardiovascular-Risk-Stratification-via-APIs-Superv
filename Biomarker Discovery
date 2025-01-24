@@ -43,8 +43,16 @@ identify_biomarkers <- function(data) {
     p_value <- summary(model)$coefficients[2, 4]  # p-value for the feature
     return(p_value)
   })
+  
   biomarker_results <- data.frame(Feature = names(results), P_Value = results)
   biomarker_results$Significant <- biomarker_results$P_Value < 0.05  # Adjust significance level
+  
+  # Organize biomarker results table
+  biomarker_results <- biomarker_results %>%
+    arrange(P_Value) %>%
+    mutate(P_Value = format(round(P_Value, 4), nsmall = 4), 
+           Significant = ifelse(Significant, "Yes", "No"))
+  
   biomarker_results
 }
 
@@ -159,7 +167,8 @@ ui <- fluidPage(
       actionButton("showGraph", "Show Graph", class = "btn-primary"),
       actionButton("showPRGraph", "Show 3D Precision-Recall Curve", class = "btn-primary"),
       actionButton("showPR2DGraph", "Show 2D Precision-Recall Curve", class = "btn-primary"),
-      actionButton("simulateTrajectory", "Simulate Lifespan Risk Trajectory", class = "btn-primary")
+      actionButton("simulateTrajectory", "Simulate Lifespan Risk Trajectory", class = "btn-primary"),
+      actionButton("run_multivariable_regression", "Run Multivariable Regression", class = "btn-primary")
     ),
     
     mainPanel(
@@ -276,7 +285,13 @@ ui <- fluidPage(
                          DTOutput("path_analysis_table"))
                    )
                  )
-        )
+        ),
+        
+        # Multivariable Regression Tab
+        tabPanel("Multivariable Regression",
+                 h4("Multivariable Regression Results"),
+                 verbatimTextOutput("multivariable_regression_result"),
+                 DTOutput("multivariable_regression_table"))
       )
     )
   )
@@ -623,7 +638,7 @@ server <- function(input, output, session) {
                showlegend = FALSE)
     })
   })
-  
+
   # Statistical Tests
   observeEvent(input$run_chisq_test, {
     chisq_test_result <- chisq.test(table(dfCardio$gender, dfCardio$cardio))
@@ -749,6 +764,30 @@ server <- function(input, output, session) {
     
     output$path_analysis_table <- renderDT({
       datatable(path_analysis_table, options = list(pageLength = 5, autoWidth = TRUE))
+    })
+  })
+
+  # Multivariable Regression
+  observeEvent(input$run_multivariable_regression, {
+    # Define and fit the multivariable logistic regression model
+    multi_model <- glm(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, 
+                       data = dfCardio, family = binomial)
+    
+    # Get the summary of the model
+    output$multivariable_regression_result <- renderPrint({
+      summary(multi_model)
+    })
+    
+    # Create a results table
+    regression_summary <- summary(multi_model)$coefficients
+    regression_table <- as.data.frame(regression_summary) %>%
+      rownames_to_column("Variable") %>%
+      rename(Estimate = Estimate, Std_Error = `Std. Error`, z_value = `z value`, P_Value = `Pr(>|z|)`) %>%
+      mutate(Significant = P_Value < 0.05)
+    
+    # Render the regression results table
+    output$multivariable_regression_table <- renderDT({
+      datatable(regression_table, options = list(pageLength = 10, autoWidth = TRUE))
     })
   })
 }
