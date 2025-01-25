@@ -9,6 +9,8 @@ library(PRROC)
 library(plotly)
 library(reshape2)
 library(broom)
+library(GGally)  # For scatterplot matrix
+library(car)     # For residual plots and influence plots
 
 # Assuming dfCardio is defined elsewhere in your code
 # dfCardio <- read.csv("path_to_your_data.csv")  # Your actual data frame should be assigned here
@@ -48,11 +50,14 @@ identify_biomarkers <- function(data) {
   biomarker_results <- data.frame(Feature = names(results), P_Value = results)
   biomarker_results$Significant <- biomarker_results$P_Value < 0.05  # Adjust significance level
   
-  # Organize biomarker results table
+  # Organize and format biomarker results table for clarity
   biomarker_results <- biomarker_results %>%
     arrange(P_Value) %>%
     mutate(P_Value = format(round(P_Value, 4), nsmall = 4), 
            Significant = ifelse(Significant, "Yes", "No"))
+  
+  # Clean up and rename columns for better clarity
+  colnames(biomarker_results) <- c("Feature", "P-Value", "Significant")
   
   biomarker_results
 }
@@ -70,6 +75,26 @@ generate_forest_plot_data <- function(model) {
   forest_data <- forest_data %>%
     filter(Variable != "(Intercept)")  # Remove intercept
   forest_data
+}
+
+# Create a function to get cholesterol levels categorized.
+get_cholesterol_levels <- function(data) {
+  cholesterol_counts <- table(data$cholesterol)
+  data.frame(Level = names(cholesterol_counts), Count = as.vector(cholesterol_counts))
+}
+
+# Function to create a Manhattan plot
+create_manhattan_plot <- function(data, feature) {
+  results <- identify_biomarkers(data)
+  results <- results %>% filter(Feature == feature)
+  
+  ggplot(results, aes(x = Feature, y = -log10(P_Value), label = Feature)) +
+    geom_bar(stat = "identity", fill = "blue") +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red") +
+    labs(title = paste("Manhattan Plot for", feature),
+         x = "Features",
+         y = "-log10(P-Value)") +
+    theme_minimal()
 }
 
 # Shiny App UI
@@ -243,7 +268,6 @@ ui <- fluidPage(
                  plotlyOutput("pcaPlot2", height = "600px"),
                  plotlyOutput("pcaPlot3", height = "600px")),
         
-        # Statistical Tests Section
         tabPanel("Statistical Tests",
                  fluidRow(
                    column(6,
@@ -315,7 +339,42 @@ ui <- fluidPage(
         # New Forest Plots Tab
         tabPanel("Forest Plots",
                  h4("Forest Plot of Biomarkers"),
-                 plotOutput("forestPlot"))
+                 plotOutput("forestPlot")),
+        
+        # Manhattan Plots Tab
+        tabPanel("Manhattan Plots",
+                 h4("Manhattan Plots for Biomarkers"),
+                 plotOutput("manhattan_plots")), 
+        
+        # New Visualization Tabs
+        tabPanel("Scatterplot Matrix",
+                 h4("Scatterplot Matrix of Health Features"),
+                 plotOutput("scatterplot_matrix")),
+        
+        tabPanel("Residual Plots",
+                 h4("Residual Plots"),
+                 plotOutput("residual_plot"),
+                 plotOutput("influence_plot")),
+        
+        tabPanel("Added-Variable Plots",
+                 h4("Added-Variable Plots"),
+                 plotOutput("added_variable_plots")),
+        
+        tabPanel("Spread-Level Plot",
+                 h4("Spread-Level Plot"),
+                 plotOutput("spread_level_plot")),
+        
+        tabPanel("Cholesterol Levels",
+                 h4("Bar Plot of Cholesterol Levels"),
+                 plotOutput("cholesterol_bar_plot")),
+        
+        tabPanel("Blood Pressure by Gender",
+                 h4("Box Plot of Blood Pressure by Gender"),
+                 plotOutput("blood_pressure_box_plot")),
+        
+        tabPanel("Age Distribution Histogram",
+                 h4("Histogram of Age Distribution"),
+                 plotOutput("age_histogram"))
       )
     )
   )
@@ -752,7 +811,7 @@ server <- function(input, output, session) {
 
   observeEvent(input$run_regression, {
     # Define and fit the multivariable logistic regression model
-    multi_model <- glm(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, 
+    multi_model <<- glm(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, 
                        data = dfCardio, family = binomial)
     
     # Get the summary of the model
@@ -773,11 +832,17 @@ server <- function(input, output, session) {
     regression_table <- as.data.frame(regression_summary) %>%
       rownames_to_column("Variable") %>%
       rename(Estimate = Estimate, Std_Error = `Std. Error`, z_value = `z value`, P_Value = `Pr(>|z|)`) %>%
-      mutate(Significant = ifelse(P_Value < 0.05, "Yes", "No"))
+      mutate(Significant = ifelse(P_Value < 0.05, "Yes", "No")) %>%
+      mutate(P_Value = format(round(P_Value, 4), nsmall = 4))  # Format P-Value for clarity
 
     # Render the regression results table
     output$multivariable_regression_table <- renderDT({
-      datatable(regression_table, options = list(pageLength = 10, autoWidth = TRUE))
+      datatable(regression_table, 
+                options = list(pageLength = 10, autoWidth = TRUE, 
+                               dom = 'Bfrtip', 
+                               buttons = c('copy', 'csv', 'excel')), 
+                class = "display", 
+                rownames = FALSE)
     })
     
     # Generate and render the forest plot for the multivariable regression model
@@ -793,6 +858,74 @@ server <- function(input, output, session) {
              y = "Odds Ratio (with 95% CI)") +
         theme_minimal()
     })
+  })
+
+  # Render Manhattan plots for each feature
+  output$manhattan_plots <- renderPlot({
+    feature_names <- colnames(dfCardio)[-which(colnames(dfCardio) == "cardio")]
+    
+    # Create a Manhattan plot for each feature
+    plots <- lapply(feature_names, function(feature) {
+      create_manhattan_plot(dfCardio, feature)
+    })
+    
+    # Combine the plots into one output
+    gridExtra::grid.arrange(grobs = plots, ncol = 2)
+  })
+  
+  # New Visualizations
+  
+  # Scatterplot Matrix
+  output$scatterplot_matrix <- renderPlot({
+    ggpairs(dfCardio[ , c("age", "weight", "height", "ap_hi", "ap_lo")]) +
+      theme_bw() + 
+      ggtitle("Scatterplot Matrix for Age, Weight, Height, Ap_hi, Ap_lo")
+  })
+  
+  # Residual Plots
+  output$residual_plot <- renderPlot({
+    par(mfrow = c(2, 2))  # Arrange plots in a 2 by 2 layout
+    plot(multi_model, which = 1:4) # Displays multiple residual and diagnostic plots
+  })
+  
+  output$influence_plot <- renderPlot({
+    influencePlot(multi_model, id.method="identify", main="Influence Plot", col = "blue")
+  })
+  
+  # Added-Variable Plots
+  output$added_variable_plots <- renderPlot({
+    avPlots(multi_model)  # Added variable plots
+  })
+  
+  # Spread-Level Plot
+  output$spread_level_plot <- renderPlot({
+    spreadLevelPlot(multi_model)  # Spread-level plot for heteroscedasticity
+  })
+  
+  # Cholesterol Levels Bar Plot
+  output$cholesterol_bar_plot <- renderPlot({
+    cholesterol_levels <- get_cholesterol_levels(dfCardio)
+    ggplot(cholesterol_levels, aes(x = Level, y = Count)) +
+      geom_bar(stat = "identity", fill = "steelblue") +
+      ggtitle("Bar Plot of Cholesterol Levels") +
+      xlab("Cholesterol Level") +
+      ylab("Count")
+  })
+  
+  # Box Plot of Blood Pressure by Gender
+  output$blood_pressure_box_plot <- renderPlot({
+    ggplot(dfCardio, aes(x = factor(gender), y = ap_hi)) +
+      geom_boxplot(fill = "lightblue") +
+      labs(x = "Gender", y = "Systolic Blood Pressure (Ap_hi)") +
+      ggtitle("Box Plot of Blood Pressure by Gender")
+  })
+  
+  # Histogram of Age Distribution
+  output$age_histogram <- renderPlot({
+    ggplot(dfCardio, aes(x = age)) +
+      geom_histogram(binwidth = 1, fill = "lightgreen", color = "black") +
+      labs(x = "Age", y = "Count") +
+      ggtitle("Histogram of Age Distribution")
   })
 }
 
