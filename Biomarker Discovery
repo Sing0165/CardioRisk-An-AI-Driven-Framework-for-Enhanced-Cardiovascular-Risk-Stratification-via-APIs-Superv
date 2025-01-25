@@ -11,6 +11,7 @@ library(reshape2)
 library(broom)
 library(GGally)  # For scatterplot matrix
 library(car)     # For residual plots and influence plots
+library(gridExtra)  # For arranging multiple grid plots
 
 # Assuming dfCardio is defined elsewhere in your code
 # dfCardio <- read.csv("path_to_your_data.csv")  # Your actual data frame should be assigned here
@@ -214,6 +215,26 @@ ui <- fluidPage(
     
     mainPanel(
       tabsetPanel(
+        tabPanel("Scatter Plot of Glucose vs. Cholesterol",
+                 h4("Glucose vs. Cholesterol Scatter Plot"),
+                 plotOutput("glucose_cholesterol_scatter")),
+        
+        tabPanel("Boxplot of Glucose and Cholesterol by Risk Level",
+                 h4("Boxplot of Glucose and Cholesterol by Diabetes Risk Level"),
+                 plotOutput("boxplot_glucose_cholesterol")),
+        
+        tabPanel("Heatmap of Glucose and Cholesterol Correlation",
+                 h4("Heatmap of Glucose and Cholesterol Correlation"),
+                 plotOutput("heatmap_glucose_cholesterol")),
+                 
+        tabPanel("Density Plot for Glucose and Cholesterol",
+                 h4("Density Plot (KDE) of Glucose and Cholesterol"),
+                 plotOutput("kde_glucose_cholesterol")),
+                 
+        tabPanel("Average Glucose and Cholesterol by Risk Level",
+                 h4("Bar Plot of Average Glucose and Cholesterol by Risk Level"),
+                 plotOutput("average_glucose_cholesterol")),
+        
         tabPanel("Global Regulatory Network",
                  h4("Global Regulatory Network Explanation"),
                  p("This network shows the relationships between different health features."), 
@@ -875,33 +896,78 @@ server <- function(input, output, session) {
   
   # New Visualizations
   
-  # Scatterplot Matrix
-  output$scatterplot_matrix <- renderPlot({
-    ggpairs(dfCardio[ , c("age", "weight", "height", "ap_hi", "ap_lo")]) +
-      theme_bw() + 
-      ggtitle("Scatterplot Matrix for Age, Weight, Height, Ap_hi, Ap_lo")
+  # Glucose vs. Cholesterol Scatter Plot
+  output$glucose_cholesterol_scatter <- renderPlot({
+    ggplot(dfCardio, aes(x = gluc, y = cholesterol, color = cardio)) +
+      geom_point(alpha = 0.6) +
+      geom_smooth(method = "lm") +
+      labs(title = "Scatter Plot of Glucose vs. Cholesterol",
+           x = "Glucose Level",
+           y = "Cholesterol Level") +
+      theme_minimal()
   })
   
-  # Residual Plots
-  output$residual_plot <- renderPlot({
-    par(mfrow = c(2, 2))  # Arrange plots in a 2 by 2 layout
-    plot(multi_model, which = 1:4) # Displays multiple residual and diagnostic plots
+  # Boxplot of Glucose and Cholesterol by Risk Level
+  output$boxplot_glucose_cholesterol <- renderPlot({
+    dfCardio$mRisk <- cut(dfCardio$gluc, 
+                          breaks = c(-Inf, 100, 140, 160, Inf), 
+                          labels = c("Low", "Moderate", "High", "Very High"))
+    df_long <- dfCardio %>% 
+      gather(key = "Variable", value = "Value", gluc, cholesterol)
+    
+    ggplot(df_long, aes(x = mRisk, y = Value, fill = Variable)) +
+      geom_boxplot() +
+      scale_fill_manual(values = c("lightblue", "orange")) +
+      labs(title = "Boxplot of Glucose and Cholesterol by Risk Level",
+           x = "Diabetes Risk Level",
+           y = "Value") +
+      theme_minimal()
   })
   
-  output$influence_plot <- renderPlot({
-    influencePlot(multi_model, id.method="identify", main="Influence Plot", col = "blue")
+  # Heatmap of Glucose and Cholesterol Correlation
+  output$heatmap_glucose_cholesterol <- renderPlot({
+    correlation_matrix <- cor(dfCardio[c("gluc", "cholesterol")], use = "complete.obs")
+    
+    ggplot(melt(correlation_matrix), aes(Var1, Var2)) +
+      geom_tile(aes(fill = value), color = "white") +
+      scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                           limit = c(-1, 1), midpoint = 0) +
+      geom_text(aes(label = round(value, 2)), color = "black", size = 10) +
+      labs(title = "Correlation Heatmap of Glucose and Cholesterol",
+           x = "", y = "") +
+      theme_minimal()
   })
   
-  # Added-Variable Plots
-  output$added_variable_plots <- renderPlot({
-    avPlots(multi_model)  # Added variable plots
+  # Density Plot (KDE) for Glucose and Cholesterol
+  output$kde_glucose_cholesterol <- renderPlot({
+    dfCardio$mRisk <- cut(dfCardio$gluc, 
+                          breaks = c(-Inf, 100, 140, 160, Inf), 
+                          labels = c("Low", "Moderate", "High", "Very High"))
+    
+    ggplot(dfCardio, aes(x = gluc, fill = mRisk)) +
+      geom_density(alpha = 0.6) +
+      labs(title = "KDE of Glucose Levels by Risk Level",
+           x = "Glucose Level",
+           y = "Density") +
+      theme_minimal()
   })
   
-  # Spread-Level Plot
-  output$spread_level_plot <- renderPlot({
-    spreadLevelPlot(multi_model)  # Spread-level plot for heteroscedasticity
+  # Bar Plot of Average Glucose and Cholesterol by Diabetes Risk Level
+  output$average_glucose_cholesterol <- renderPlot({
+    avg_values <- dfCardio %>%
+      group_by(mRisk) %>%
+      summarise(Avg_Glucose = mean(gluc, na.rm = TRUE),
+                Avg_Cholesterol = mean(cholesterol, na.rm = TRUE)) %>%
+      pivot_longer(cols = c(Avg_Glucose, Avg_Cholesterol), names_to = "Variable", values_to = "Average")
+
+    ggplot(avg_values, aes(x = mRisk, y = Average, fill = Variable)) +
+      geom_bar(stat = "identity", position = "dodge") +
+      labs(title = "Average Glucose and Cholesterol by Diabetes Risk Level",
+           x = "Diabetes Risk Level",
+           y = "Average Value") +
+      theme_minimal()
   })
-  
+ 
   # Cholesterol Levels Bar Plot
   output$cholesterol_bar_plot <- renderPlot({
     cholesterol_levels <- get_cholesterol_levels(dfCardio)
