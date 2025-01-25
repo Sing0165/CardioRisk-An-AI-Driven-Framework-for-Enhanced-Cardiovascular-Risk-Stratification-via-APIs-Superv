@@ -215,7 +215,6 @@ ui <- fluidPage(
     
     mainPanel(
       tabsetPanel(
-        
         # New features at the start
         tabPanel("Scatterplot Matrix",
                  h4("Scatterplot Matrix of Health Features"),
@@ -1004,19 +1003,17 @@ server <- function(input, output, session) {
   
   # Residual Plots
   output$residual_plot <- renderPlot({
-    resid_model <- lm(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, data = dfCardio)
+    resid_model <<- lm(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, data = dfCardio)
     plot(resid_model, which = 1, main = "Residuals vs Fitted")
   })
   
   output$influence_plot <- renderPlot({
-    resid_model <- lm(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, data = dfCardio)
     influencePlot(resid_model, main="Influence Plot")
   })
   
   # Added-Variable Plots
   output$added_variable_plots <- renderPlot({
-    resid_model <- lm(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, data = dfCardio)
-    added_variable_plot(resid_model)
+    plot(AddedVariablePlot(resid_model))
   })
   
   # Spread-Level Plot
