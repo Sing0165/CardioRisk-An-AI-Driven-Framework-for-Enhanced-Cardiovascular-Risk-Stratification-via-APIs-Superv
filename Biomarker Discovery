@@ -215,6 +215,26 @@ ui <- fluidPage(
     
     mainPanel(
       tabsetPanel(
+        
+        # New features at the start
+        tabPanel("Scatterplot Matrix",
+                 h4("Scatterplot Matrix of Health Features"),
+                 plotOutput("scatterplot_matrix")),
+        
+        tabPanel("Residual Plots",
+                 h4("Residual Plots"),
+                 plotOutput("residual_plot"),
+                 plotOutput("influence_plot")),
+        
+        tabPanel("Added-Variable Plots",
+                 h4("Added-Variable Plots"),
+                 plotOutput("added_variable_plots")),
+        
+        tabPanel("Spread-Level Plot",
+                 h4("Spread-Level Plot"),
+                 plotOutput("spread_level_plot")),
+
+        # Original visualization panels
         tabPanel("Scatter Plot of Glucose vs. Cholesterol",
                  h4("Glucose vs. Cholesterol Scatter Plot"),
                  plotOutput("glucose_cholesterol_scatter")),
@@ -366,25 +386,7 @@ ui <- fluidPage(
         tabPanel("Manhattan Plots",
                  h4("Manhattan Plots for Biomarkers"),
                  plotOutput("manhattan_plots")), 
-        
-        # New Visualization Tabs
-        tabPanel("Scatterplot Matrix",
-                 h4("Scatterplot Matrix of Health Features"),
-                 plotOutput("scatterplot_matrix")),
-        
-        tabPanel("Residual Plots",
-                 h4("Residual Plots"),
-                 plotOutput("residual_plot"),
-                 plotOutput("influence_plot")),
-        
-        tabPanel("Added-Variable Plots",
-                 h4("Added-Variable Plots"),
-                 plotOutput("added_variable_plots")),
-        
-        tabPanel("Spread-Level Plot",
-                 h4("Spread-Level Plot"),
-                 plotOutput("spread_level_plot")),
-        
+
         tabPanel("Cholesterol Levels",
                  h4("Bar Plot of Cholesterol Levels"),
                  plotOutput("cholesterol_bar_plot")),
@@ -992,6 +994,34 @@ server <- function(input, output, session) {
       geom_histogram(binwidth = 1, fill = "lightgreen", color = "black") +
       labs(x = "Age", y = "Count") +
       ggtitle("Histogram of Age Distribution")
+  })
+  
+  # Scatterplot Matrix
+  output$scatterplot_matrix <- renderPlot({
+    ggpairs(dfCardio[, c("age", "weight", "height", "ap_hi", "ap_lo")],
+             title = "Scatterplot Matrix of Health Features")
+  })
+  
+  # Residual Plots
+  output$residual_plot <- renderPlot({
+    resid_model <- lm(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, data = dfCardio)
+    plot(resid_model, which = 1, main = "Residuals vs Fitted")
+  })
+  
+  output$influence_plot <- renderPlot({
+    resid_model <- lm(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, data = dfCardio)
+    influencePlot(resid_model, main="Influence Plot")
+  })
+  
+  # Added-Variable Plots
+  output$added_variable_plots <- renderPlot({
+    resid_model <- lm(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, data = dfCardio)
+    added_variable_plot(resid_model)
+  })
+  
+  # Spread-Level Plot
+  output$spread_level_plot <- renderPlot({
+    spreadLevelPlot(resid_model)
   })
 }
 
