@@ -13,6 +13,9 @@ library(GGally)  # For scatterplot matrix
 library(car)     # For residual plots and influence plots
 library(gridExtra)  # For arranging multiple grid plots
 library(xgboost)  # For XGBoost modeling
+library(rpart)    # For decision tree model
+library(rpart.plot)  # For plotting decision trees
+library(DiagrammeR)  # For a clearer decision tree diagram
 
 # Assuming dfCardio is defined elsewhere in your code
 # dfCardio <- read.csv("path_to_your_data.csv")  # Your actual data frame should be assigned here
@@ -212,7 +215,8 @@ ui <- fluidPage(
       actionButton("showPR2DGraph", "Show 2D Precision-Recall Curve", class = "btn-primary"),
       actionButton("simulateTrajectory", "Simulate Lifespan Risk Trajectory", class = "btn-primary"),
       actionButton("run_regression", "Run Multivariable Regression & Statistical Tests", class = "btn-primary"),
-      actionButton("run_xgboost", "Run XGBoost Model", class = "btn-primary")
+      actionButton("run_xgboost", "Run XGBoost Model", class = "btn-primary"),
+      actionButton("run_decision_tree", "Show Decision Tree", class = "btn-primary")  # Button for decision tree
     ),
     
     mainPanel(
@@ -234,7 +238,7 @@ ui <- fluidPage(
         tabPanel("Spread-Level Plot",
                  h4("Spread-Level Plot"),
                  plotOutput("spread_level_plot")),
-
+        
         # Original visualization panels
         tabPanel("Scatter Plot of Glucose vs. Cholesterol",
                  h4("Glucose vs. Cholesterol Scatter Plot"),
@@ -403,7 +407,10 @@ ui <- fluidPage(
         tabPanel("XGBoost Model Metrics",  # New tab for XGBoost model metrics
                  h4("XGBoost Model Metrics Results"),
                  verbatimTextOutput("xgb_model_summary"),
-                 verbatimTextOutput("xgb_metrics_summary"))
+                 verbatimTextOutput("xgb_metrics_summary"),
+                 # New tab for Decision Tree Visualization
+                 uiOutput("decision_tree_ui"),  # Decision tree output
+                 plotOutput("decision_tree_plot"))  # Plot for the decision tree
       )
     )
   )
@@ -1027,7 +1034,7 @@ server <- function(input, output, session) {
   output$spread_level_plot <- renderPlot({
     spreadLevelPlot(resid_model)
   })
-  
+
   # XGBoost model
   observeEvent(input$run_xgboost, {
     # Prepare data for XGBoost
@@ -1071,6 +1078,31 @@ server <- function(input, output, session) {
       cat("Accuracy:", round(accuracy, 4), "\n")
       cat("Precision:", round(precision, 4), "\n")
       cat("Recall:", round(recall, 4), "\n")
+    })
+
+    # Create decision tree for XGBoost model
+    xgb_tree <- rpart(cardio ~ ., data = dfCardio[train_index, ], method = "class")
+    
+    output$decision_tree_plot <- renderPlot({
+      rpart.plot(xgb_tree, main = "Decision Tree for XGBoost Model", 
+                 extra = 1, 
+                 box.col = c("coral", "lightblue")[xgb_tree$frame$yval])
+    })
+  })
+  
+  # Decision tree for multivariable regression
+  observeEvent(input$run_decision_tree, {
+    dt_model <- rpart(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, 
+                      data = dfCardio, method = "class")
+    
+    output$decision_tree_ui <- renderUI({
+      plotOutput("decision_tree_plot")
+    })
+    
+    output$decision_tree_plot <- renderPlot({
+      rpart.plot(dt_model, main = "Decision Tree for Multivariable Model", 
+                 extra = 1, 
+                 box.col = c("coral", "lightblue")[dt_model$frame$yval])
     })
   })
 }
