@@ -57,6 +57,21 @@ identify_biomarkers <- function(data) {
   biomarker_results
 }
 
+# Helper function for generating forest plot data
+generate_forest_plot_data <- function(model) {
+  coef_summary <- summary(model)$coefficients
+  forest_data <- data.frame(
+    Variable = rownames(coef_summary),
+    Estimate = coef_summary[, "Estimate"],
+    Lower_CI = coef_summary[, "Estimate"] - 1.96 * coef_summary[, "Std. Error"],
+    Upper_CI = coef_summary[, "Estimate"] + 1.96 * coef_summary[, "Std. Error"],
+    P_Value = coef_summary[, "Pr(>|z|)"]
+  )
+  forest_data <- forest_data %>%
+    filter(Variable != "(Intercept)")  # Remove intercept
+  forest_data
+}
+
 # Shiny App UI
 ui <- fluidPage(
   tags$head(
@@ -295,7 +310,12 @@ ui <- fluidPage(
         tabPanel("Multivariable Regression",
                  h4("Multivariable Regression Results"),
                  verbatimTextOutput("multivariable_regression_result"),
-                 DTOutput("multivariable_regression_table"))
+                 DTOutput("multivariable_regression_table")),
+                 
+        # New Forest Plots Tab
+        tabPanel("Forest Plots",
+                 h4("Forest Plot of Biomarkers"),
+                 plotOutput("forestPlot"))
       )
     )
   )
@@ -758,6 +778,20 @@ server <- function(input, output, session) {
     # Render the regression results table
     output$multivariable_regression_table <- renderDT({
       datatable(regression_table, options = list(pageLength = 10, autoWidth = TRUE))
+    })
+    
+    # Generate and render the forest plot for the multivariable regression model
+    forest_data <- generate_forest_plot_data(multi_model)
+
+    output$forestPlot <- renderPlot({
+      ggplot(forest_data, aes(x = Variable, y = Estimate, ymin = Lower_CI, ymax = Upper_CI)) +
+        geom_pointrange() +
+        geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+        coord_flip() +
+        labs(title = "Forest Plot of Biomarkers Effect Sizes",
+             x = "Biomarkers",
+             y = "Odds Ratio (with 95% CI)") +
+        theme_minimal()
     })
   })
 }
