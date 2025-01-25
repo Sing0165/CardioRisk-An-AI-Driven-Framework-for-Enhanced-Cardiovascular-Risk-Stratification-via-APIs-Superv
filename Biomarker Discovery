@@ -9,9 +9,9 @@ library(PRROC)
 library(plotly)
 library(reshape2)
 library(broom)
-library(GGally)  # For scatterplot matrix
-library(car)     # For residual plots and influence plots
-library(gridExtra)  # For arranging multiple grid plots
+library(GGally)   # For scatterplot matrix
+library(car)      # For residual plots and influence plots
+library(gridExtra)   # For arranging multiple grid plots
 library(xgboost)  # For XGBoost modeling
 library(rpart)    # For decision tree model
 library(rpart.plot)  # For plotting decision trees
@@ -410,7 +410,16 @@ ui <- fluidPage(
                  verbatimTextOutput("xgb_metrics_summary"),
                  # New tab for Decision Tree Visualization
                  uiOutput("decision_tree_ui"),  # Decision tree output
-                 plotOutput("decision_tree_plot"))  # Plot for the decision tree
+                 plotOutput("decision_tree_plot")),  # Plot for the decision tree
+
+        # New tabs for network architectures
+        tabPanel("XGBoost Network Architecture",
+                 h4("XGBoost Model Architecture"),
+                 visNetworkOutput("xgb_network")),
+        
+        tabPanel("Multivariable Regression Network Architecture",
+                 h4("Multivariable Regression Model Architecture"),
+                 visNetworkOutput("multi_reg_network"))
       )
     )
   )
@@ -533,6 +542,7 @@ server <- function(input, output, session) {
       model <- glm(cardio ~ get(feature), data = dfCardio, family = binomial)
       summary(model)$coefficients[2, ] # Coefficients
     })
+ 
     regression_results_df <- data.frame(
       Feature = biomarker_results$Feature,
       Coefficient = sapply(regression_results, function(x) x[1]),
@@ -1088,6 +1098,16 @@ server <- function(input, output, session) {
                  extra = 1, 
                  box.col = c("coral", "lightblue")[xgb_tree$frame$yval])
     })
+
+    # Create XGBoost network architecture visualization
+    xgb_network_data <- create_messy_network(dfCardio[, c("age", "height", "weight", "ap_hi", "ap_lo", "gluc", "smoke", "cardio")])
+    output$xgb_network <- renderVisNetwork({
+      visNetwork(xgb_network_data$nodes, xgb_network_data$edges) %>%
+        visEdges(arrows = "to", smooth = FALSE) %>%
+        visOptions(highlightNearest = list(enabled = TRUE, degree = 2)) %>%
+        visPhysics(solver = "repulsion") %>%
+        visLayout(randomSeed = 123)
+    })
   })
   
   # Decision tree for multivariable regression
@@ -1103,6 +1123,16 @@ server <- function(input, output, session) {
       rpart.plot(dt_model, main = "Decision Tree for Multivariable Model", 
                  extra = 1, 
                  box.col = c("coral", "lightblue")[dt_model$frame$yval])
+    })
+
+    # Create multivariable regression model architecture visualization
+    multi_reg_network_data <- create_messy_network(dfCardio[, c("age", "height", "weight", "ap_hi", "ap_lo", "gluc", "smoke", "cardio")])
+    output$multi_reg_network <- renderVisNetwork({
+      visNetwork(multi_reg_network_data$nodes, multi_reg_network_data$edges) %>%
+        visEdges(arrows = "to", smooth = FALSE) %>%
+        visOptions(highlightNearest = list(enabled = TRUE, degree = 2)) %>%
+        visPhysics(solver = "repulsion") %>%
+        visLayout(randomSeed = 123)
     })
   })
 }
