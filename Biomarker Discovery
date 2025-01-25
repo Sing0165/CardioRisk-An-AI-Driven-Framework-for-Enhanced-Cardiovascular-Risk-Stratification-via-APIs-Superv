@@ -8,9 +8,10 @@ library(ggplot2)
 library(PRROC)
 library(plotly)
 library(reshape2)
+library(broom)
 
 # Assuming dfCardio is defined elsewhere in your code
-# dfCardio <- ... # Your actual data frame should be assigned here
+# dfCardio <- read.csv("path_to_your_data.csv")  # Your actual data frame should be assigned here
 
 # Perform Differential Expression Analysis (DEA)
 perform_dea <- function(data) {
@@ -188,6 +189,11 @@ ui <- fluidPage(
                  h4("Biomarker Discovery Results"),
                  DTOutput("biomarker_table")),
         
+        tabPanel("Biomarker Analysis",
+                 h4("Biomarker Regression Analysis"),
+                 verbatimTextOutput("biomarker_regression_summary"),
+                 plotlyOutput("biomarker_regression_plot")),
+        
         tabPanel("Ontology Model",
                  h4("Ontology Model Visualization"),
                  visNetworkOutput("ontology_network")),
@@ -216,7 +222,6 @@ ui <- fluidPage(
                  h4("Simulation of Lifespan and Risk Trajectory"),
                  plotlyOutput("lifespanTrajectoryPlot", height = "600px")),
         
-        # New PCA Visualization Tab
         tabPanel("3D PCA Visualization",
                  h4("3D PCA Visualizations"),
                  plotlyOutput("pcaPlot1", height = "600px"),
@@ -301,7 +306,7 @@ server <- function(input, output, session) {
   
   # Helper function to perform DEA
   dea_results <- perform_dea(dfCardio)
-  
+
   # Helper function to create complex and messy regulatory networks
   create_messy_network <- function(data, threshold = 0.1, focus = NULL) {
     correlations <- cor(data, use = "complete.obs")
@@ -386,6 +391,46 @@ server <- function(input, output, session) {
     ), 
     class = "display", 
     rownames = FALSE)
+  })
+  
+  # Regression Analysis for Biomarkers
+  output$biomarker_regression_summary <- renderPrint({
+    biomarker_results <- identify_biomarkers(dfCardio)
+    regression_results <- lapply(biomarker_results$Feature, function(feature) {
+      model <- glm(cardio ~ get(feature), data = dfCardio, family = binomial)
+      summary(model)$coefficients
+    })
+    regression_results_df <- do.call(rbind, lapply(seq_along(regression_results), 
+                                      function(i) {
+      data.frame(Feature = biomarker_results$Feature[i],
+                 Estimate = regression_results[[i]][2, 1],
+                 Std_Error = regression_results[[i]][2, 2],
+                 z_value = regression_results[[i]][2, 3],
+                 P_Value = regression_results[[i]][2, 4])
+    }))
+    
+    print(regression_results_df)
+  })
+  
+  output$biomarker_regression_plot <- renderPlotly({
+    biomarker_results <- identify_biomarkers(dfCardio)
+    regression_results <- lapply(biomarker_results$Feature, function(feature) {
+      model <- glm(cardio ~ get(feature), data = dfCardio, family = binomial)
+      summary(model)$coefficients[2, ] # Coefficients
+    })
+    regression_results_df <- data.frame(
+      Feature = biomarker_results$Feature,
+      Coefficient = sapply(regression_results, function(x) x[1]),
+      P_Value = sapply(regression_results, function(x) x[4])
+    )
+    
+    plot_ly(regression_results_df, x = ~Feature, y = ~Coefficient, type = 'bar', 
+            text = ~paste("P-Value: ", round(P_Value, 4)),
+            hoverinfo = "text") %>%
+      layout(title = "Regression Coefficients of Biomarkers",
+             xaxis = list(title = "Features"),
+             yaxis = list(title = "Coefficient"),
+             showlegend = FALSE)
   })
   
   # Create and render ontology network visualization
@@ -718,4 +763,4 @@ server <- function(input, output, session) {
 }
 
 # Run the application
-shinyApp(ui = ui, server = server) 
+shinyApp(ui = ui, server = server)
