@@ -12,6 +12,7 @@ library(broom)
 library(GGally)  # For scatterplot matrix
 library(car)     # For residual plots and influence plots
 library(gridExtra)  # For arranging multiple grid plots
+library(xgboost)  # For XGBoost modeling
 
 # Assuming dfCardio is defined elsewhere in your code
 # dfCardio <- read.csv("path_to_your_data.csv")  # Your actual data frame should be assigned here
@@ -210,7 +211,8 @@ ui <- fluidPage(
       actionButton("showPRGraph", "Show 3D Precision-Recall Curve", class = "btn-primary"),
       actionButton("showPR2DGraph", "Show 2D Precision-Recall Curve", class = "btn-primary"),
       actionButton("simulateTrajectory", "Simulate Lifespan Risk Trajectory", class = "btn-primary"),
-      actionButton("run_regression", "Run Multivariable Regression & Statistical Tests", class = "btn-primary")
+      actionButton("run_regression", "Run Multivariable Regression & Statistical Tests", class = "btn-primary"),
+      actionButton("run_xgboost", "Run XGBoost Model", class = "btn-primary")
     ),
     
     mainPanel(
@@ -396,7 +398,12 @@ ui <- fluidPage(
         
         tabPanel("Age Distribution Histogram",
                  h4("Histogram of Age Distribution"),
-                 plotOutput("age_histogram"))
+                 plotOutput("age_histogram")),
+        
+        tabPanel("XGBoost Model Metrics",  # New tab for XGBoost model metrics
+                 h4("XGBoost Model Metrics Results"),
+                 verbatimTextOutput("xgb_model_summary"),
+                 verbatimTextOutput("xgb_metrics_summary"))
       )
     )
   )
@@ -1019,6 +1026,52 @@ server <- function(input, output, session) {
   # Spread-Level Plot
   output$spread_level_plot <- renderPlot({
     spreadLevelPlot(resid_model)
+  })
+  
+  # XGBoost model
+  observeEvent(input$run_xgboost, {
+    # Prepare data for XGBoost
+    dfCardio$xgb_data <- dfCardio %>%
+      mutate(cardio = as.numeric(cardio)) %>%
+      select(-cardio)  # Exclude target variable
+    
+    # Create dummy variables for categorical variables
+    dfCardio$xgb_data <- model.matrix(~ ., data=dfCardio$xgb_data)[, -1]
+    
+    # Split data into train and test sets
+    set.seed(123)
+    train_index <- sample(1:nrow(dfCardio$xgb_data), 0.8 * nrow(dfCardio$xgb_data))
+    
+    xgb_train <- dfCardio$xgb_data[train_index,]
+    xgb_test <- dfCardio$xgb_data[-train_index,]
+    
+    y_train <- dfCardio$cardio[train_index]
+    y_test <- dfCardio$cardio[-train_index]
+    
+    # Train the XGBoost model
+    xgb_model <- xgboost(data = xgb_train, label = y_train, 
+                         nrounds = 100, objective = "binary:logistic", 
+                         eval_metric = "logloss", verbose = 0)
+
+    # Predictions
+    xgb_pred <- predict(xgb_model, xgb_test)
+    xgb_pred_class <- ifelse(xgb_pred > 0.5, 1, 0)
+
+    # Confusion Matrix and summary metrics
+    cm <- table(Predicted = xgb_pred_class, Actual = y_test)
+    accuracy <- sum(diag(cm)) / sum(cm)
+    precision <- cm[2,2] / sum(cm[2,])
+    recall <- cm[2,2] / sum(cm[,2])
+    
+    output$xgb_model_summary <- renderPrint({
+      print(xgb_model)
+    })
+    
+    output$xgb_metrics_summary <- renderPrint({
+      cat("Accuracy:", round(accuracy, 4), "\n")
+      cat("Precision:", round(precision, 4), "\n")
+      cat("Recall:", round(recall, 4), "\n")
+    })
   })
 }
 
