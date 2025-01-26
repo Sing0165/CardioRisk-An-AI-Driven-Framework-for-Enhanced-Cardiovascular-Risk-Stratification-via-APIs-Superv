@@ -14,6 +14,8 @@ library(dplyr)  # For data manipulation
 library(ggalluvial)  # For Sankey diagram
 library(igraph)  # For network graph
 library(reshape2)  # For reshaping data
+library(tidytext)  # For text mining
+library(dplyr)  # For data manipulation
 
 # Assuming dfCardio dataset is pre-loaded
 # dfCardio <- read.csv("path_to_your_dfCardio.csv")  # Uncomment and adapt to load your dataset
@@ -38,7 +40,8 @@ ui <- dashboardPage(
       menuItem("Network Graph for User Interactions", tabName = "network_graph", icon = icon("project-diagram")),
       menuItem("Sankey Diagram for Emotion Flow", tabName = "sankey_diagram", icon = icon("stream")),
       menuItem("Facet Grid of Sentiment by User", tabName = "facet_grid", icon = icon("grip-horizontal")),
-      menuItem("Statistical Analysis", tabName = "statistical_analysis", icon = icon("calculator"))  # New tab
+      menuItem("Statistical Analysis", tabName = "statistical_analysis", icon = icon("calculator")),  # New tab
+      menuItem("Topic Modeling", tabName = "topic_modeling", icon = icon("lightbulb"))  # New tab for Topic Modeling
     ),
     width = 250
   ),
@@ -213,6 +216,15 @@ ui <- dashboardPage(
                                           "Kruskal-Wallis Test" = "kruskal_wallis")),
                   actionButton("run_test", "Run Test", class = "btn-info btn-lg"),
                   verbatimTextOutput("test_results")
+                )
+              )),
+      tabItem(tabName = "topic_modeling",  # New Topic Modeling tab
+              fluidRow(
+                box(
+                  title = "Topic Modeling", width = 12, status = "primary", solidHeader = TRUE,
+                  actionButton("runTopicModeling", "Run Topic Modeling", class = "btn-success btn-lg"),
+                  plotOutput("topicModelingPlot", height = "600px"),
+                  verbatimTextOutput("topicModelingResults")
                 )
               ))
     )
@@ -690,6 +702,41 @@ server <- function(input, output, session) {
     output$test_results <- renderPrint({
       cat(result_text, sep = "\n")
     })
+  })
+
+  # Topic Modeling
+  observeEvent(input$runTopicModeling, {
+    if (nrow(chat_history()) > 1) {
+      # Create a data frame of messages
+      messages_df <- data.frame(text = chat_history()$Message)
+      messages_df <- messages_df %>% unnest_tokens(word, text)
+      messages_df <- messages_df %>% anti_join(stop_words)
+
+      # Count word frequencies
+      word_counts <- messages_df %>%
+        count(word) %>%
+        arrange(desc(n))
+
+      # Find and return top words
+      output$topicModelingResults <- renderPrint({
+        head(word_counts, 10)
+      })
+
+      # Plot word frequencies
+      output$topicModelingPlot <- renderPlot({
+        ggplot(word_counts, aes(x = reorder(word, n), y = n)) +
+          geom_col() +
+          coord_flip() +
+          labs(title = "Top Words in User Messages", x = "Words", y = "Frequency")
+      })
+    } else {
+      showModal(modalDialog(
+        title = "Insufficient Data",
+        "At least two messages are required to perform topic modeling.",
+        easyClose = TRUE,
+        footer = NULL
+      ))
+    }
   })
 }
 
