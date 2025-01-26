@@ -9,10 +9,9 @@ library(wordcloud)
 library(RColorBrewer)
 library(syuzhet)
 
-# Use your dfCardio dataset (assuming it's pre-loaded)
+# Assuming dfCardio dataset is pre-loaded
 # dfCardio <- read.csv("path_to_your_dfCardio.csv")  # Uncomment and adapt to load your dataset
 
-# Chatbot logic with sentiment analysis and emotion detection
 ui <- dashboardPage(
   dashboardHeader(title = "Chatbot with Sentiment Analysis", titleWidth = 300),
   dashboardSidebar(
@@ -21,12 +20,10 @@ ui <- dashboardPage(
       menuItem("CVD Questions", tabName = "cvd_questions", icon = icon("question-circle")),
       menuItem("Chat", tabName = "chat", icon = icon("comments")),
       menuItem("Sentiment & Emotion", tabName = "sentiment_emotion", icon = icon("chart-line")),
+      menuItem("Metrics", tabName = "metrics", icon = icon("tachometer-alt")),
       menuItem("Word Cloud", tabName = "word_cloud", icon = icon("cloud")),
       menuItem("Emotion Score Consistency", tabName = "emotion_consistency", icon = icon("balance-scale")),
-      menuItem("Emotion Detection Accuracy", tabName = "emotion_accuracy", icon = icon("check-square")),
-      menuItem("Emotion Clusters", tabName = "emotion_clusters", icon = icon("cluster")),
-      menuItem("Comparison of Human vs AI Sentiment", tabName = "comparison_sentiment", icon = icon("balance-scale")),
-      menuItem("Sentiment Analysis for Predictive Modeling", tabName = "predictive_modeling", icon = icon("chart-line"))
+      menuItem("Emotion Detection Accuracy", tabName = "emotion_accuracy", icon = icon("check-square"))
     ),
     width = 250
   ),
@@ -93,6 +90,18 @@ ui <- dashboardPage(
                 )
               )
       ),
+      tabItem(tabName = "metrics",
+              fluidRow(
+                box(
+                  title = "Dashboard Summary", width = 12, status = "primary", solidHeader = TRUE,
+                  p("Summary of key metrics from chat interactions."),
+                  textOutput("avgSentimentScore"),
+                  textOutput("mostFrequentEmotion"),
+                  textOutput("totalMessages"),
+                  textOutput("sentimentCounts")
+                )
+              )
+      ),
       tabItem(tabName = "word_cloud",
               fluidRow(
                 box(
@@ -112,27 +121,6 @@ ui <- dashboardPage(
                 box(
                   title = "Emotion Detection Accuracy", width = 12, status = "primary", solidHeader = TRUE,
                   plotOutput("confusionMatrixPlot", height = "300px")
-                )
-              )),
-      tabItem(tabName = "emotion_clusters",
-              fluidRow(
-                box(
-                  title = "Emotion Clusters Visualization", width = 12, status = "primary", solidHeader = TRUE,
-                  plotOutput("emotionClustersPlot", height = "600px")
-                )
-              )),
-      tabItem(tabName = "comparison_sentiment",
-              fluidRow(
-                box(
-                  title = "Comparison of Human vs AI-Generated Sentiment", width = 12, status = "primary", solidHeader = TRUE,
-                  plotOutput("comparisonSentimentPlot", height = "600px")
-                )
-              )),
-      tabItem(tabName = "predictive_modeling",
-              fluidRow(
-                box(
-                  title = "Sentiment Analysis for Predictive Modeling", width = 12, status = "primary", solidHeader = TRUE,
-                  plotOutput("predictiveModelPlot", height = "600px")
                 )
               ))
     )
@@ -172,21 +160,10 @@ server <- function(input, output, session) {
     return(unlist(strsplit(generateContent(prompt, api_key), "\n")))
   }
 
-  # Function to calculate accuracy metrics
-  calculate_accuracy <- function() {
-    if (nrow(chat_history()) > 1) {
-      confusion_matrix <- table(Actual = chat_history()$Emotion[chat_history()$Role == "User"],
-                                 Predicted = chat_history()$Emotion[chat_history()$Role == "Model"])
-      return(confusion_matrix)
-    } else {
-      return(NULL)
-    }
-  }
-
   # Generate content from chatbot and perform sentiment analysis
   observeEvent(input$generateBtn, {
     user_text <- input$userInput
-    api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ"  # Replace with your actual API key
+    api_key <- "YOUR_API_KEY_HERE"  # Replace with your actual API key
     
     if (user_text != "" && response_count() < 10) {
       # Generate response based on user input
@@ -236,6 +213,28 @@ server <- function(input, output, session) {
           class = 'cell-border stripe',
           escape = FALSE
         )
+      })
+
+      # Update metrics
+      output$avgSentimentScore <- renderText({
+        avg_score <- mean(chat_history()$Score)
+        paste("Average Sentiment Score:", round(avg_score, 2))
+      })
+      
+      output$mostFrequentEmotion <- renderText({
+        emotion_counts <- table(chat_history()$Emotion)
+        most_frequent <- names(emotion_counts)[which.max(emotion_counts)]
+        paste("Most Frequently Discussed Emotion:", most_frequent)
+      })
+      
+      output$totalMessages <- renderText({
+        paste("Total Messages Exchanged:", nrow(chat_history()))
+      })
+      
+      output$sentimentCounts <- renderText({
+        sentiment_counts <- table(chat_history()$Sentiment)
+        sentiment_summary <- paste(names(sentiment_counts), ":", as.vector(sentiment_counts), collapse = ", ")
+        paste("Sentiment Counts:", sentiment_summary)
       })
 
       # Render the sentiment count plot
@@ -307,7 +306,7 @@ server <- function(input, output, session) {
 
   # Start generating questions based on user input
   observeEvent(input$generateQuestionsBtn, {
-    api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ" # Replace with your API key
+    api_key <- "YOUR_API_KEY_HERE" # Replace with your API key
     if (!generate_questions()) {
       cvd_questions(generateCVDQuestions(api_key))
       generate_questions(TRUE)
@@ -411,71 +410,16 @@ server <- function(input, output, session) {
     }
   })
 
-  # Render Emotion Clusters Visualization
-  output$emotionClustersPlot <- renderPlot({
+  # Function to calculate accuracy metrics
+  calculate_accuracy <- function() {
     if (nrow(chat_history()) > 1) {
-      emotion_data <- chat_history()$Emotion
-      
-      # Calculate frequencies of distinct emotions
-      emotion_counts <- table(emotion_data)
-      emotion_df <- data.frame(Emotion = names(emotion_counts), Count = as.numeric(emotion_counts))
-
-      # Create a scatter plot for emotion clusters
-      ggplot(emotion_df, aes(x = Emotion, y = Count, color = Emotion)) +
-        geom_point(size = 5) +
-        geom_line(aes(group = 1)) +
-        labs(title = "Emotion Clusters in User Interactions", x = "Emotion", y = "Count") +
-        theme_minimal() +
-        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+      confusion_matrix <- table(Actual = chat_history()$Emotion[chat_history()$Role == "User"],
+                                 Predicted = chat_history()$Emotion[chat_history()$Role == "Model"])
+      return(confusion_matrix)
     } else {
-      plot.new()
-      text(0.5, 0.5, "Not enough data to display emotion clusters.", cex = 1.5)
+      return(NULL)
     }
-  })
-
-  # Render Comparison of Human vs AI-Generated Sentiment
-  output$comparisonSentimentPlot <- renderPlot({
-    if (nrow(chat_history()) > 1) {
-      sentiment_data <- data.frame(
-        Role = chat_history()$Role,
-        Score = chat_history()$Score
-      )
-      
-      ggplot(sentiment_data, aes(x = Role, y = Score, fill = Role)) +
-        geom_boxplot() +
-        labs(title = "Comparison of Human vs AI Sentiment", x = "Role", y = "Sentiment Score") +
-        theme_minimal() +
-        theme(legend.position = "bottom")
-    } else {
-      plot.new()
-      text(0.5, 0.5, "Not enough data to display sentiment comparison.", cex = 1.5)
-    }
-  })
-
-  # Render Predictive Modeling based on sentiment
-  output$predictiveModelPlot <- renderPlot({
-    if (nrow(chat_history()) > 2) {
-      sentiment_data <- chat_history()$Score
-      # Here you can implement any predictive modeling analysis you wish.
-      # For example, simple linear regression predicting a dummy response variable:
-      response_variable <- rnorm(nrow(chat_history()), mean = 5, sd = 2)   # Placeholder for real predictive model
-      model_fit <- lm(response_variable ~ sentiment_data)
-      
-      plot_data <- data.frame(
-        Sentiment = sentiment_data,
-        Response = response_variable
-      )
-      
-      ggplot(plot_data, aes(x = Sentiment, y = Response)) +
-        geom_point() +
-        geom_smooth(method = "lm", color = "blue") +
-        labs(title = "Predictive Modeling Using Sentiment Scores", x = "Sentiment Scores", y = "Response Variable") +
-        theme_minimal()
-    } else {
-      plot.new()
-      text(0.5, 0.5, "Not enough data for predictive modeling.", cex = 1.5)
-    }
-  })
+  }
 }
 
 # Function to generate content (response from model)
