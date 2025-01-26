@@ -11,6 +11,9 @@ library(syuzhet)
 library(plotly)  # Added for advanced visualizations
 library(cluster)  # For clustering
 library(dplyr)  # For data manipulation
+library(ggalluvial)  # For Sankey diagram
+library(igraph)  # For network graph
+library(reshape2)  # For reshaping data
 
 # Assuming dfCardio dataset is pre-loaded
 # dfCardio <- read.csv("path_to_your_dfCardio.csv")  # Uncomment and adapt to load your dataset
@@ -30,7 +33,11 @@ ui <- dashboardPage(
       menuItem("Cluster Analysis", tabName = "cluster_analysis", icon = icon("sitemap")),
       menuItem("User Classification", tabName = "user_classification", icon = icon("users")),
       menuItem("Advanced Visualizations", tabName = "advanced_visualizations", icon = icon("chart-bar")),
-      menuItem("Time Spent Analysis", tabName = "time_spent_analysis", icon = icon("clock"))
+      menuItem("Time Spent Analysis", tabName = "time_spent_analysis", icon = icon("clock")),
+      menuItem("Heatmap of Emotion Frequency", tabName = "emotion_heatmap", icon = icon("heat-map")),
+      menuItem("Network Graph for User Interactions", tabName = "network_graph", icon = icon("project-diagram")),
+      menuItem("Sankey Diagram for Emotion Flow", tabName = "sankey_diagram", icon = icon("stream")),
+      menuItem("Facet Grid of Sentiment by User", tabName = "facet_grid", icon = icon("grip-horizontal"))
     ),
     width = 250
   ),
@@ -163,6 +170,35 @@ ui <- dashboardPage(
                   plotOutput("timeSpentPlot", height = "600px"),
                   p("This plot analyzes the time spent across different conversation types.")
                 )
+              )),
+      # New tabs for additional features
+      tabItem(tabName = "emotion_heatmap",
+              fluidRow(
+                box(
+                  title = "Heatmap of Emotion Frequency", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("emotionHeatmapPlot", height = "600px")
+                )
+              )),
+      tabItem(tabName = "network_graph",
+              fluidRow(
+                box(
+                  title = "Network Graph for User Interactions", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("networkGraphPlot", height = "600px")
+                )
+              )),
+      tabItem(tabName = "sankey_diagram",
+              fluidRow(
+                box(
+                  title = "Sankey Diagram for Emotion Flow", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("sankeyDiagramPlot", height = "600px")
+                )
+              )),
+      tabItem(tabName = "facet_grid",
+              fluidRow(
+                box(
+                  title = "Facet Grid of Sentiment by User", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("facetGridPlot", height = "600px")
+                )
               ))
     )
   )
@@ -191,7 +227,7 @@ server <- function(input, output, session) {
   # Initialize CVD questions
   cvd_questions <- reactiveVal(NULL)
   current_question_index <- reactiveVal(1)
-  
+
   # Log for when questions should be generated
   generate_questions <- reactiveVal(FALSE)
 
@@ -205,33 +241,33 @@ server <- function(input, output, session) {
   observeEvent(input$generateBtn, {
     user_text <- input$userInput
     api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ"  # Replace with your actual API key
-    
+
     if (user_text != "" && response_count() < 10) {
       # Generate response based on user input
       response <- generateContent(user_text, api_key)
-      
+
       # Perform sentiment analysis on user input
       user_sentiment_score <- sentimentr::sentiment(user_text)$sentiment
       user_sentiment_label <- ifelse(mean(user_sentiment_score) > 0, "Positive", 
                                       ifelse(mean(user_sentiment_score) < 0, "Negative", "Neutral"))
       user_score <- min(max(mean(user_sentiment_score), -1), 1)
-      
+
       # Perform emotion detection on user input
       user_emotions <- get_nrc_sentiment(user_text)
       user_emotion_index <- which(user_emotions[1, ] == max(user_emotions[1, ]))
       user_emotion_label <- if (length(user_emotion_index) > 0) colnames(user_emotions)[user_emotion_index[1]] else NA
-      
+
       # Perform sentiment analysis on the chatbot's response
       sentiment_score <- sentimentr::sentiment(response)$sentiment
       sentiment_label <- ifelse(mean(sentiment_score) > 0, "Positive", 
                                 ifelse(mean(sentiment_score) < 0, "Negative", "Neutral"))
       response_score <- min(max(mean(sentiment_score), -1), 1)
-      
+
       # Perform emotion detection on chatbot's response
       response_emotions <- get_nrc_sentiment(response)
       response_emotion_index <- which(response_emotions[1, ] == max(response_emotions[1, ]))
       response_emotion_label <- if (length(response_emotion_index) > 0) colnames(response_emotions)[response_emotion_index[1]] else NA
-      
+
       # Update chat history with timestamp
       updated_history <- rbind(chat_history(), 
                                data.frame(Role = "User", Message = user_text, Sentiment = user_sentiment_label, 
@@ -241,10 +277,10 @@ server <- function(input, output, session) {
                                           Score = response_score, Emotion = response_emotion_label, 
                                           timestamp = Sys.time(), stringsAsFactors = FALSE))
       chat_history(updated_history)
-      
+
       # Update response count
       response_count(response_count() + 1)
-      
+
       # Render updated chat output
       output$chatOutput <- renderDataTable({
         DT::datatable(
@@ -286,12 +322,12 @@ server <- function(input, output, session) {
           labs(title = "Sentiment Count Distribution", x = "Sentiment", y = "Count") +
           theme_minimal() + theme(legend.position = "bottom")
       })
-      
+
       # Render the emotion count plot
       output$emotionCountPlot <- renderPlot({
         emotions_list <- table(chat_history()$Emotion)
         emotion_counts_df <- data.frame(Emotion = names(emotions_list), Count = as.numeric(emotions_list))
-        
+
         # Render the plot only if there are emotions counted
         if (nrow(emotion_counts_df) > 0) {
           ggplot(emotion_counts_df, aes(x = reorder(Emotion, -Count), y = Count, fill = Emotion)) +
@@ -300,7 +336,7 @@ server <- function(input, output, session) {
             theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")
         }
       })
-      
+
       # Render the sentiment score plot
       output$sentimentScorePlot <- renderPlot({
         sentiment_data <- data.frame(Role = factor(chat_history()$Role), Score = chat_history()$Score)
@@ -309,7 +345,7 @@ server <- function(input, output, session) {
           labs(title = "Sentiment Scores by Role", x = "Role", y = "Sentiment Score") +
           theme_minimal() + theme(legend.position = "bottom")
       })
-      
+
       # Render the sentiment line plot
       output$sentimentLinePlot <- renderPlot({
         sentiment_scores <- data.frame(
@@ -322,7 +358,7 @@ server <- function(input, output, session) {
           labs(title = "Sentiment Score Trend", x = "Message Count", y = "Sentiment Score") +
           theme_minimal()
       })
-      
+
       # Render the cumulative sentiment plot
       output$cumulativeSentimentPlot <- renderPlot({
         cumulative_scores <- cumsum(chat_history()$Score)
@@ -332,7 +368,7 @@ server <- function(input, output, session) {
           labs(title = "Cumulative Sentiment Score Trend", x = "Message Count", y = "Cumulative Sentiment Score") +
           theme_minimal()
       })
-      
+
       updateTextInput(session, "userInput", value = "")
     } else if (response_count() >= 10) {
       # Display message if more than 10 responses have been entered
@@ -366,19 +402,19 @@ server <- function(input, output, session) {
       ))
     }
   })
-  
+
   # Get the next question
   observeEvent(input$nextQuestionBtn, {
     if (generate_questions()) {
       answer <- input$answerInput
-      
+
       if (answer != "") {
         # Process the answer - for now just printing to console
         print(paste("User answered: ", answer))
         current_question_index(current_question_index() + 1)
         updateTextInput(session, "answerInput", value = "")
       }
-      
+
       # Update the question to display
       output$currentQuestion <- renderText({
         if (current_question_index() <= length(cvd_questions())) {
@@ -389,7 +425,7 @@ server <- function(input, output, session) {
       })
     }
   })
-  
+
   # Create and render the word cloud
   output$wordCloudPlot <- renderPlot({
     # Combine all messages into a single text corpus
@@ -399,17 +435,17 @@ server <- function(input, output, session) {
     messages_corpus <- tm_map(messages_corpus, removePunctuation)
     messages_corpus <- tm_map(messages_corpus, removeNumbers)
     messages_corpus <- tm_map(messages_corpus, removeWords, stopwords("en"))
-    
+
     # Create a term-document matrix
     tdm <- TermDocumentMatrix(messages_corpus)
     matrix <- as.matrix(tdm)
     word_freqs <- sort(rowSums(matrix), decreasing = TRUE)
     word_freqs_df <- data.frame(word = names(word_freqs), freq = word_freqs)
-    
+
     # Generate the word cloud
     wordcloud(words = word_freqs_df$word, freq = word_freqs_df$freq, min.freq = 1, max.words = 100, random.order = FALSE, rot.per = 0.35, colors = brewer.pal(8, "Dark2"))
   })
-  
+
   # Render the Emotion Score Consistency plot
   output$emotionConsistencyPlot <- renderPlot({
     if (nrow(chat_history()) > 1) {
@@ -417,11 +453,11 @@ server <- function(input, output, session) {
         UserEmotion = chat_history()$Emotion[chat_history()$Role == "User"],
         ModelEmotion = chat_history()$Emotion[chat_history()$Role == "Model"]
       )
-      
+
       # Convert emotions to a factor
       consistency_data <- na.omit(consistency_data)
       consistency_data$UserEmotion <- factor(consistency_data$UserEmotion)
-      
+
       ggplot(consistency_data, aes(x = UserEmotion, fill = ModelEmotion)) +
         geom_bar(position = "fill") +
         labs(title = "Model Response Emotion Consistency", x = "User Emotion", y = "Proportion") +
@@ -432,11 +468,11 @@ server <- function(input, output, session) {
       text(0.5, 0.5, "Not enough data to display consistency.", cex = 1.5)
     }
   })
-  
+
   # Render the Confusion Matrix for Emotion Detection
   output$confusionMatrixPlot <- renderPlot({
     confusion_matrix <- calculate_accuracy()
-    
+
     if (!is.null(confusion_matrix)) {
       ggplot(as.data.frame(confusion_matrix), aes(x = Actual, y = Predicted)) +
         geom_tile(aes(fill = Freq), color = "white") +
@@ -489,7 +525,7 @@ server <- function(input, output, session) {
 
   # User Classification
   output$userClassificationPlot <- renderPlot({
-    if(nrow(chat_history()) > 0) {
+    if (nrow(chat_history()) > 0) {
       user_emotion_dist <- as.data.frame(table(chat_history()$Emotion))
       colnames(user_emotion_dist) <- c("Emotion", "Count")
 
@@ -534,6 +570,70 @@ server <- function(input, output, session) {
       geom_col() +
       labs(title = "Time Spent Analysis by Role", x = "Role", y = "Total Time Spent (mins)") +
       theme_minimal()
+  })
+
+  # Heatmap of Emotion Frequency
+  output$emotionHeatmapPlot <- renderPlot({
+    emotion_freq <- table(chat_history()$Emotion)
+    emotion_freq_df <- as.data.frame(emotion_freq)
+
+    ggplot(emotion_freq_df, aes(x = "", y = Var1, fill = Freq)) +
+      geom_tile() +
+      scale_fill_gradient(low = "white", high = "blue") +
+      labs(title = "Heatmap of Emotion Frequency", x = "", y = "Emotion") +
+      theme_minimal() +
+      theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+  })
+
+  # Network Graph for User Interactions
+  output$networkGraphPlot <- renderPlot({
+    if (nrow(chat_history()) > 1) {
+      # Create an edge list for interactions based on sentiments
+      edge_list <- chat_history()[, c("Role", "Emotion")]
+      colnames(edge_list) <- c("from", "to")
+
+      g <- graph_from_data_frame(edge_list, directed = TRUE)
+      plot(g, vertex.size=5, vertex.color="skyblue", edge.arrow.size=0.5, 
+           main="Network Graph of User Interactions", layout=layout_with_fr)
+    } else {
+      plot.new()
+      text(0.5, 0.5, "Not enough data for a network graph.", cex = 1.5)
+    }
+  })
+
+  # Sankey Diagram for Emotion Flow
+  output$sankeyDiagramPlot <- renderPlot({
+    if (nrow(chat_history()) > 1) {
+      sankey_data <- data.frame(
+        UserEmotion = chat_history()$Emotion[chat_history()$Role == "User"],
+        ModelEmotion = chat_history()$Emotion[chat_history()$Role == "Model"]
+      )
+      sankey_data <- as.data.frame(table(sankey_data))
+
+      ggplot(sankey_data, aes(axis1 = UserEmotion, axis2 = ModelEmotion, y = Freq)) +
+        geom_alluvium(aes(fill = UserEmotion)) +
+        geom_stratum() +
+        geom_text(stat = "stratum", aes(label = after_stat(stratum))) +
+        labs(title = "Sankey Diagram of Emotion Flow", x = "Emotions", y = "Frequency") +
+        theme_minimal()
+    } else {
+      plot.new()
+      text(0.5, 0.5, "Not enough data for a Sankey diagram.", cex = 1.5)
+    }
+  })
+
+  # Facet Grid of Sentiment by User
+  output$facetGridPlot <- renderPlot({
+    if (nrow(chat_history()) > 0) {
+      ggplot(chat_history(), aes(x = Sentiment)) +
+        geom_bar() +
+        facet_wrap(~ Role) +
+        labs(title = "Facet Grid of Sentiment by User", x = "Sentiment", y = "Count") +
+        theme_minimal()
+    } else {
+      plot.new()
+      text(0.5, 0.5, "No data available for facet grid.", cex = 1.5)
+    }
   })
 }
 
