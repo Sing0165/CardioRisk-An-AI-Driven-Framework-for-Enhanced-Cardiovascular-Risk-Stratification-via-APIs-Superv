@@ -23,7 +23,10 @@ ui <- dashboardPage(
       menuItem("Sentiment & Emotion", tabName = "sentiment_emotion", icon = icon("chart-line")),
       menuItem("Word Cloud", tabName = "word_cloud", icon = icon("cloud")),
       menuItem("Emotion Score Consistency", tabName = "emotion_consistency", icon = icon("balance-scale")),
-      menuItem("Emotion Detection Accuracy", tabName = "emotion_accuracy", icon = icon("check-square"))
+      menuItem("Emotion Detection Accuracy", tabName = "emotion_accuracy", icon = icon("check-square")),
+      menuItem("Emotion Clusters", tabName = "emotion_clusters", icon = icon("cluster")),
+      menuItem("Comparison of Human vs AI Sentiment", tabName = "comparison_sentiment", icon = icon("balance-scale")),
+      menuItem("Sentiment Analysis for Predictive Modeling", tabName = "predictive_modeling", icon = icon("chart-line"))
     ),
     width = 250
   ),
@@ -109,6 +112,27 @@ ui <- dashboardPage(
                 box(
                   title = "Emotion Detection Accuracy", width = 12, status = "primary", solidHeader = TRUE,
                   plotOutput("confusionMatrixPlot", height = "300px")
+                )
+              )),
+      tabItem(tabName = "emotion_clusters",
+              fluidRow(
+                box(
+                  title = "Emotion Clusters Visualization", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("emotionClustersPlot", height = "600px")
+                )
+              )),
+      tabItem(tabName = "comparison_sentiment",
+              fluidRow(
+                box(
+                  title = "Comparison of Human vs AI-Generated Sentiment", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("comparisonSentimentPlot", height = "600px")
+                )
+              )),
+      tabItem(tabName = "predictive_modeling",
+              fluidRow(
+                box(
+                  title = "Sentiment Analysis for Predictive Modeling", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("predictiveModelPlot", height = "600px")
                 )
               ))
     )
@@ -384,6 +408,72 @@ server <- function(input, output, session) {
     } else {
       plot.new()
       text(0.5, 0.5, "Not enough data to display the confusion matrix.", cex = 1.5)
+    }
+  })
+
+  # Render Emotion Clusters Visualization
+  output$emotionClustersPlot <- renderPlot({
+    if (nrow(chat_history()) > 1) {
+      emotion_data <- chat_history()$Emotion
+      
+      # Calculate frequencies of distinct emotions
+      emotion_counts <- table(emotion_data)
+      emotion_df <- data.frame(Emotion = names(emotion_counts), Count = as.numeric(emotion_counts))
+
+      # Create a scatter plot for emotion clusters
+      ggplot(emotion_df, aes(x = Emotion, y = Count, color = Emotion)) +
+        geom_point(size = 5) +
+        geom_line(aes(group = 1)) +
+        labs(title = "Emotion Clusters in User Interactions", x = "Emotion", y = "Count") +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    } else {
+      plot.new()
+      text(0.5, 0.5, "Not enough data to display emotion clusters.", cex = 1.5)
+    }
+  })
+
+  # Render Comparison of Human vs AI-Generated Sentiment
+  output$comparisonSentimentPlot <- renderPlot({
+    if (nrow(chat_history()) > 1) {
+      sentiment_data <- data.frame(
+        Role = chat_history()$Role,
+        Score = chat_history()$Score
+      )
+      
+      ggplot(sentiment_data, aes(x = Role, y = Score, fill = Role)) +
+        geom_boxplot() +
+        labs(title = "Comparison of Human vs AI Sentiment", x = "Role", y = "Sentiment Score") +
+        theme_minimal() +
+        theme(legend.position = "bottom")
+    } else {
+      plot.new()
+      text(0.5, 0.5, "Not enough data to display sentiment comparison.", cex = 1.5)
+    }
+  })
+
+  # Render Predictive Modeling based on sentiment
+  output$predictiveModelPlot <- renderPlot({
+    if (nrow(chat_history()) > 2) {
+      sentiment_data <- chat_history()$Score
+      # Here you can implement any predictive modeling analysis you wish.
+      # For example, simple linear regression predicting a dummy response variable:
+      response_variable <- rnorm(nrow(chat_history()), mean = 5, sd = 2)   # Placeholder for real predictive model
+      model_fit <- lm(response_variable ~ sentiment_data)
+      
+      plot_data <- data.frame(
+        Sentiment = sentiment_data,
+        Response = response_variable
+      )
+      
+      ggplot(plot_data, aes(x = Sentiment, y = Response)) +
+        geom_point() +
+        geom_smooth(method = "lm", color = "blue") +
+        labs(title = "Predictive Modeling Using Sentiment Scores", x = "Sentiment Scores", y = "Response Variable") +
+        theme_minimal()
+    } else {
+      plot.new()
+      text(0.5, 0.5, "Not enough data for predictive modeling.", cex = 1.5)
     }
   })
 }
