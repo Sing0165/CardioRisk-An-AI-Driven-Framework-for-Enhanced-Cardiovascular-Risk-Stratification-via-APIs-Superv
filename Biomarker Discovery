@@ -16,6 +16,7 @@ library(xgboost)  # For XGBoost modeling
 library(rpart)    # For decision tree model
 library(rpart.plot)  # For plotting decision trees
 library(DiagrammeR)  # For a clearer decision tree diagram
+library(glmnet)      # For penalized regression
 
 # Assuming dfCardio is defined elsewhere in your code
 # dfCardio <- read.csv("path_to_your_data.csv")  # Your actual data frame should be assigned here
@@ -279,6 +280,14 @@ ui <- fluidPage(
                  h4("Biomarker Regression Analysis"),
                  verbatimTextOutput("biomarker_regression_summary"),
                  plotlyOutput("biomarker_regression_plot")),
+        
+        tabPanel("Penalized Regression Analysis",
+                 h4("Penalized Regression to Identify Biomarkers"),
+                 selectInput("penalized_method", "Select Regression Method:", 
+                             choices = c("Lasso", "Ridge")),
+                 actionButton("run_penalized_regression", "Run Penalized Regression", class = "btn-primary"),
+                 verbatimTextOutput("penalized_regression_summary"),
+                 plotOutput("penalized_regression_plot")),
         
         tabPanel("Ontology Model",
                  h4("Ontology Model Visualization"),
@@ -556,6 +565,30 @@ server <- function(input, output, session) {
              xaxis = list(title = "Features"),
              yaxis = list(title = "Coefficient"),
              showlegend = FALSE)
+  })
+  
+  # Penalized regression analysis
+  observeEvent(input$run_penalized_regression, {
+    # Prepare data for glmnet
+    x <- model.matrix(cardio ~ . - 1, data = dfCardio)
+    y <- dfCardio$cardio
+    
+    # Fit the model based on the selected method
+    if (input$penalized_method == "Lasso") {
+      penalized_model <- cv.glmnet(x, y, alpha = 1, family = "binomial")
+    } else {
+      penalized_model <- cv.glmnet(x, y, alpha = 0, family = "binomial")
+    }
+    
+    # Get a summary of the model
+    output$penalized_regression_summary <- renderPrint({
+      print(penalized_model)
+    })
+    
+    # Generate a plot of the penalized regression model
+    output$penalized_regression_plot <- renderPlot({
+      plot(penalized_model)
+    })
   })
   
   # Create and render ontology network visualization
