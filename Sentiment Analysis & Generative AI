@@ -37,7 +37,8 @@ ui <- dashboardPage(
       menuItem("Heatmap of Emotion Frequency", tabName = "emotion_heatmap", icon = icon("heat-map")),
       menuItem("Network Graph for User Interactions", tabName = "network_graph", icon = icon("project-diagram")),
       menuItem("Sankey Diagram for Emotion Flow", tabName = "sankey_diagram", icon = icon("stream")),
-      menuItem("Facet Grid of Sentiment by User", tabName = "facet_grid", icon = icon("grip-horizontal"))
+      menuItem("Facet Grid of Sentiment by User", tabName = "facet_grid", icon = icon("grip-horizontal")),
+      menuItem("Statistical Analysis", tabName = "statistical_analysis", icon = icon("calculator"))  # New tab
     ),
     width = 250
   ),
@@ -198,6 +199,20 @@ ui <- dashboardPage(
                 box(
                   title = "Facet Grid of Sentiment by User", width = 12, status = "primary", solidHeader = TRUE,
                   plotOutput("facetGridPlot", height = "600px")
+                )
+              )),
+      tabItem(tabName = "statistical_analysis",  # New Statistical Analysis tab
+              fluidRow(
+                box(
+                  title = "Statistical Tests", width = 12, status = "primary", solidHeader = TRUE,
+                  selectInput("test_type", "Select Test Type:", 
+                              choices = c("ANOVA" = "anova", 
+                                          "Chi-Square Test" = "chi_sq", 
+                                          "T-Test" = "t_test", 
+                                          "Mann-Whitney U Test" = "mann_whitney", 
+                                          "Kruskal-Wallis Test" = "kruskal_wallis")),
+                  actionButton("run_test", "Run Test", class = "btn-info btn-lg"),
+                  verbatimTextOutput("test_results")
                 )
               ))
     )
@@ -634,6 +649,47 @@ server <- function(input, output, session) {
       plot.new()
       text(0.5, 0.5, "No data available for facet grid.", cex = 1.5)
     }
+  })
+  
+  # Statistical Tests
+  observeEvent(input$run_test, {
+    test_type <- input$test_type
+    result_text <- ""
+
+    if (nrow(chat_history()) < 2) {
+      result_text <- "Not enough data to perform statistical tests."
+    } else {
+      # ANOVA Test
+      if (test_type == "anova") {
+        anova_result <- aov(Score ~ Sentiment, data = chat_history())
+        summary_result <- summary(anova_result)
+        result_text <- capture.output(print(summary_result))
+      }
+      # Chi-Square Test
+      else if (test_type == "chi_sq") {
+        chi_sq_result <- chisq.test(table(chat_history()$Sentiment, chat_history()$Emotion))
+        result_text <- capture.output(print(chi_sq_result))
+      }
+      # T-Test
+      else if (test_type == "t_test") {
+        t_test_result <- t.test(Score ~ Sentiment, data = chat_history())
+        result_text <- capture.output(print(t_test_result))
+      }
+      # Mann-Whitney U Test
+      else if (test_type == "mann_whitney") {
+        mann_whitney_result <- wilcox.test(Score ~ Sentiment, data = chat_history())
+        result_text <- capture.output(print(mann_whitney_result))
+      }
+      # Kruskal-Wallis Test
+      else if (test_type == "kruskal_wallis") {
+        kruskal_result <- kruskal.test(Score ~ Sentiment, data = chat_history())
+        result_text <- capture.output(print(kruskal_result))
+      }
+    }
+
+    output$test_results <- renderPrint({
+      cat(result_text, sep = "\n")
+    })
   })
 }
 
