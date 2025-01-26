@@ -8,6 +8,9 @@ library(tm)
 library(wordcloud)
 library(RColorBrewer)
 library(syuzhet)
+library(plotly)  # Added for advanced visualizations
+library(cluster)  # For clustering
+library(dplyr)  # For data manipulation
 
 # Assuming dfCardio dataset is pre-loaded
 # dfCardio <- read.csv("path_to_your_dfCardio.csv")  # Uncomment and adapt to load your dataset
@@ -23,7 +26,11 @@ ui <- dashboardPage(
       menuItem("Metrics", tabName = "metrics", icon = icon("tachometer-alt")),
       menuItem("Word Cloud", tabName = "word_cloud", icon = icon("cloud")),
       menuItem("Emotion Score Consistency", tabName = "emotion_consistency", icon = icon("balance-scale")),
-      menuItem("Emotion Detection Accuracy", tabName = "emotion_accuracy", icon = icon("check-square"))
+      menuItem("Emotion Detection Accuracy", tabName = "emotion_accuracy", icon = icon("check-square")),
+      menuItem("Cluster Analysis", tabName = "cluster_analysis", icon = icon("sitemap")),
+      menuItem("User Classification", tabName = "user_classification", icon = icon("users")),
+      menuItem("Advanced Visualizations", tabName = "advanced_visualizations", icon = icon("chart-bar")),
+      menuItem("Time Spent Analysis", tabName = "time_spent_analysis", icon = icon("clock"))
     ),
     width = 250
   ),
@@ -122,6 +129,40 @@ ui <- dashboardPage(
                   title = "Emotion Detection Accuracy", width = 12, status = "primary", solidHeader = TRUE,
                   plotOutput("confusionMatrixPlot", height = "300px")
                 )
+              )),
+      tabItem(tabName = "cluster_analysis",
+              fluidRow(
+                box(
+                  title = "Cluster Analysis", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("clusterPlot", height = "600px"),
+                  p("This plot shows the clustering of user messages based on sentiment and emotion."),
+                  actionButton("performClustering", "Perform Clustering", class = "btn-warning btn-lg")
+                )
+              )),
+      tabItem(tabName = "user_classification",
+              fluidRow(
+                box(
+                  title = "User Classification", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("userClassificationPlot", height = "600px"),
+                  p("This plot displays user classifications based on emotional profiles.")
+                )
+              )),
+      tabItem(tabName = "advanced_visualizations",
+              fluidRow(
+                box(
+                  title = "Advanced Visualizations", width = 12, status = "primary", solidHeader = TRUE,
+                  plotlyOutput("advancedSentimentPlot", height = "300px"),
+                  plotlyOutput("advancedEmotionPlot", height = "300px"),
+                  p("Interact with the plots for deeper insights.")
+                )
+              )),
+      tabItem(tabName = "time_spent_analysis",
+              fluidRow(
+                box(
+                  title = "Time Spent Analysis", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("timeSpentPlot", height = "600px"),
+                  p("This plot analyzes the time spent across different conversation types.")
+                )
               ))
     )
   )
@@ -142,7 +183,7 @@ server <- function(input, output, session) {
   # Initialize chat history
   chat_history <- reactiveVal(data.frame(Role = character(), Message = character(),
                                          Sentiment = character(), Score = numeric(),
-                                         Emotion = character(), stringsAsFactors = FALSE))
+                                         Emotion = character(), timestamp = as.POSIXct(character()), stringsAsFactors = FALSE))
 
   # Keep track of the number of responses
   response_count <- reactiveVal(0)
@@ -163,7 +204,7 @@ server <- function(input, output, session) {
   # Generate content from chatbot and perform sentiment analysis
   observeEvent(input$generateBtn, {
     user_text <- input$userInput
-    api_key <- "YOUR_API_KEY_HERE"  # Replace with your actual API key
+    api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ"  # Replace with your actual API key
     
     if (user_text != "" && response_count() < 10) {
       # Generate response based on user input
@@ -191,14 +232,14 @@ server <- function(input, output, session) {
       response_emotion_index <- which(response_emotions[1, ] == max(response_emotions[1, ]))
       response_emotion_label <- if (length(response_emotion_index) > 0) colnames(response_emotions)[response_emotion_index[1]] else NA
       
-      # Update chat history
+      # Update chat history with timestamp
       updated_history <- rbind(chat_history(), 
                                data.frame(Role = "User", Message = user_text, Sentiment = user_sentiment_label, 
                                           Score = user_score, Emotion = user_emotion_label, 
-                                          stringsAsFactors = FALSE), 
+                                          timestamp = Sys.time(), stringsAsFactors = FALSE), 
                                data.frame(Role = "Model", Message = response, Sentiment = sentiment_label, 
                                           Score = response_score, Emotion = response_emotion_label, 
-                                          stringsAsFactors = FALSE))
+                                          timestamp = Sys.time(), stringsAsFactors = FALSE))
       chat_history(updated_history)
       
       # Update response count
@@ -306,7 +347,7 @@ server <- function(input, output, session) {
 
   # Start generating questions based on user input
   observeEvent(input$generateQuestionsBtn, {
-    api_key <- "YOUR_API_KEY_HERE" # Replace with your API key
+    api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ" # Replace with your API key
     if (!generate_questions()) {
       cvd_questions(generateCVDQuestions(api_key))
       generate_questions(TRUE)
@@ -420,6 +461,80 @@ server <- function(input, output, session) {
       return(NULL)
     }
   }
+
+  # Cluster Analysis
+  observeEvent(input$performClustering, {
+    if (nrow(chat_history()) > 1) {
+      sentiment_data <- data.frame(Score = chat_history()$Score, Emotion = as.numeric(as.factor(chat_history()$Emotion)))
+      clusters <- kmeans(sentiment_data, centers = 3)
+
+      # Add cluster assignment to the history
+      chat_history(cbind(chat_history(), Cluster = clusters$cluster))
+
+      output$clusterPlot <- renderPlot({
+        ggplot(sentiment_data, aes(x = Score, y = Emotion, color = as.factor(clusters$cluster))) +
+          geom_point(size = 3) +
+          labs(title = "Cluster Analysis of User Chats", x = "Sentiment Score", y = "Emotion", color = "Cluster") +
+          theme_minimal()
+      })
+    } else {
+      showModal(modalDialog(
+        title = "Insufficient Data",
+        "At least two messages are required to perform clustering.",
+        easyClose = TRUE,
+        footer = NULL
+      ))
+    }
+  })
+
+  # User Classification
+  output$userClassificationPlot <- renderPlot({
+    if(nrow(chat_history()) > 0) {
+      user_emotion_dist <- as.data.frame(table(chat_history()$Emotion))
+      colnames(user_emotion_dist) <- c("Emotion", "Count")
+
+      ggplot(user_emotion_dist, aes(x = Emotion, y = Count, fill = Emotion)) +
+        geom_bar(stat = "identity") +
+        labs(title = "User Emotion Classification", x = "Emotion", y = "Count") +
+        theme_minimal() + theme(legend.position = "none")
+    } else {
+      plot.new()
+      text(0.5, 0.5, "No chat history available for classification.", cex = 1.5)
+    }
+  })
+
+  # Advanced Visualizations
+  output$advancedSentimentPlot <- renderPlotly({
+    sentiment_data <- data.frame(Sentiment = chat_history()$Sentiment, Timestamp = chat_history()$timestamp)
+    sentiment_summary <- sentiment_data %>%
+      group_by(Timestamp = as.Date(Timestamp)) %>%
+      summarise(SentimentCount = n())
+
+    plot_ly(sentiment_summary, x = ~Timestamp, y = ~SentimentCount, type = 'scatter', mode = 'lines+markers', name = 'Sentiment') %>%
+      layout(title = "Sentiment Over Time", xaxis = list(title = "Date"), yaxis = list(title = "Count"))
+  })
+
+  output$advancedEmotionPlot <- renderPlotly({
+    emotion_data <- data.frame(Emotion = chat_history()$Emotion, Timestamp = chat_history()$timestamp)
+    emotion_summary <- emotion_data %>%
+      group_by(Timestamp = as.Date(Timestamp), Emotion) %>%
+      summarise(Count = n())
+
+    plot_ly(emotion_summary, x = ~Timestamp, y = ~Count, color = ~Emotion, type = 'bar') %>%
+      layout(title = "Emotion Distribution Over Time", xaxis = list(title = "Date"), yaxis = list(title = "Count"))
+  })
+
+  # Time Spent Analysis
+  output$timeSpentPlot <- renderPlot({
+    time_data <- chat_history() %>%
+      group_by(Role) %>%
+      summarise(TotalMessages = n(), TotalTime = difftime(max(timestamp), min(timestamp), units = "mins"))
+
+    ggplot(time_data, aes(x = Role, y = TotalTime, fill = Role)) +
+      geom_col() +
+      labs(title = "Time Spent Analysis by Role", x = "Role", y = "Total Time Spent (mins)") +
+      theme_minimal()
+  })
 }
 
 # Function to generate content (response from model)
