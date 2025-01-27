@@ -9,21 +9,35 @@ library(fmsb)
 library(corrplot)
 library(RColorBrewer)
 library(shinycssloaders) # Add loading animations to plots
+library(broom) # For tidy model output
+library(knitr) # For nicer table outputs
+library(DT) # For interactive tables
+library(rmarkdown) # For report generation
 
 # Prepare the data
 data <- data.frame(
-  Feature = c("age", "weight", "ap_hi", "cholesterol", "gluc", "ap_lo", 
+  Feature = c("age", "weight", "ap_hi", "cholesterol", "gluc", "ap_lo",
               "active", "smoke", "height", "gender", "alco", "id"),
-  Estimate = c(2.015421e-04, 2.672162e-02, 4.953846e-02, 6.980843e-01, 3.183453e-01, 
-               2.123630e-03, -1.797826e-01, -1.093408e-01, -2.637158e-03, 
+  Estimate = c(2.015421e-04, 2.672162e-02, 4.953846e-02, 6.980843e-01, 3.183453e-01,
+               2.123630e-03, -1.797826e-01, -1.093408e-01, -2.637158e-03,
                3.401480e-02, -6.501463e-02, 2.633815e-07),
-  Std_Error = c(3.268044e-06, 5.689632e-04, 5.797933e-04, 1.238123e-02, 
-                1.360920e-02, 1.063992e-04, 1.907250e-02, 2.669685e-02, 
+  Std_Error = c(3.268044e-06, 5.689632e-04, 5.797933e-04, 1.238123e-02,
+                1.360920e-02, 1.063992e-04, 1.907250e-02, 2.669685e-02,
                 9.213171e-04, 1.585375e-02, 3.352812e-02, 2.620139e-07),
-  P_Value = c(0, 0, 0, 0, 5.163471e-121, 1.250139e-88, 4.249136e-21, 
-              4.209936e-05, 4.204746e-03, 3.190994e-02, 5.248823e-02, 
+  P_Value = c(0, 0, 0, 0, 5.163471e-121, 1.250139e-88, 4.249136e-21,
+              4.209936e-05, 4.204746e-03, 3.190994e-02, 5.248823e-02,
               3.147912e-01)
 )
+
+# Calculate Confidence Intervals
+data <- data %>%
+  mutate(
+    lower_ci = Estimate - qnorm(0.975) * Std_Error,
+    upper_ci = Estimate + qnorm(0.975) * Std_Error,
+    Odds_Ratio = exp(Estimate),  # Calculate Odds Ratios
+    Strength = -log(P_Value) * Odds_Ratio  # Strength metric based on log P-value and Odds Ratio
+  ) %>%
+  arrange(desc(Strength))  # Rank by Strength metric
 
 # Custom CSS
 custom_css <- "
@@ -41,7 +55,10 @@ ui <- dashboardPage(
   dashboardSidebar(
     sidebarMenu(
       menuItem("Visualizations", tabName = "visualizations", icon = icon("chart-bar")),
-      menuItem("Data Overview", tabName = "data_overview", icon = icon("table"))
+      menuItem("Data Overview", tabName = "data_overview", icon = icon("table")),
+      menuItem("Statistical Tests", tabName = "stat_tests", icon = icon("calculator")),
+      menuItem("Strongest Biomarkers", tabName = "strongest_biomarkers", icon = icon("chart-line")),
+      menuItem("Reports", tabName = "reports", icon = icon("file"))
     )
   ),
   dashboardBody(
@@ -53,7 +70,8 @@ ui <- dashboardPage(
                     selectInput("plotType", "Choose a plot type:",
                                 choices = c("Horizontal Bar Plot", "Parallel Coordinate Plot", 
                                             "Radar Chart", "3D Scatter Plot", 
-                                            "Box Plot", "Heatmap"), selected = "Horizontal Bar Plot"),
+                                            "Box Plot", "Heatmap", "Density Plot"), 
+                                selected = "Horizontal Bar Plot"),
                     checkboxInput("showErrorBars", "Show Error Bars", TRUE),
                     width = 4
                 ),
@@ -64,10 +82,44 @@ ui <- dashboardPage(
                 )
               )
       ),
+      
       tabItem(tabName = "data_overview",
               fluidRow(
                 box(title = "Data Summary", status = "primary", solidHeader = TRUE,
-                    verbatimTextOutput("dataSummary"),
+                    DT::dataTableOutput("dataSummary"),
+                    width = 12
+                )
+              )
+      ),
+      
+      tabItem(tabName = "stat_tests",
+              fluidRow(
+                box(title = "Statistical Test Results", status = "primary", solidHeader = TRUE,
+                    selectInput("statTestType", "Select Statistical Test:", 
+                                choices = c("T-test", "ANOVA")),
+                    tableOutput("statResults"),
+                    width = 12
+                ),
+                box(title = "Confidence Intervals", status = "primary", solidHeader = TRUE,
+                    tableOutput("confIntervals"),
+                    width = 12
+                )
+              )
+      ),
+      
+      tabItem(tabName = "strongest_biomarkers",
+              fluidRow(
+                box(title = "Strongest Biomarkers Analysis", status = "primary", solidHeader = TRUE,
+                    plotOutput("strongestBiomarkersPlot", height = "600px") %>% shinycssloaders::withSpinner(),
+                    width = 12
+                )
+              )
+      ),
+
+      tabItem(tabName = "reports",
+              fluidRow(
+                box(title = "Generate Report", status = "primary", solidHeader = TRUE,
+                    downloadButton("downloadReport", "Download Report"),
                     width = 12
                 )
               )
@@ -79,10 +131,10 @@ ui <- dashboardPage(
 # Define the Shiny server
 server <- function(input, output) {
   
-  output$dataSummary <- renderPrint({
-    summary(data)
+  output$dataSummary <- DT::renderDataTable({
+    DT::datatable(data)
   })
-  
+
   output$mainPlot <- renderPlot({
     plotType <- input$plotType
     
@@ -147,6 +199,17 @@ server <- function(input, output) {
                tl.col = "black", tl.srt = 45,
                title = "Correlation Heatmap of Biomarkers", mar=c(0,0,1,0),
                addgrid.col = "grey", addCoef.col = "white")
+      
+    } else if (plotType == "Density Plot") {
+      ggplot(data, aes(x = Estimate)) +
+        geom_density(fill = "lightblue", alpha = 0.5) +
+        theme_minimal() +
+        labs(title = "Density Plot of Biomarker Estimates",
+             subtitle = "Visualizing the distribution of estimates") +
+        theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+              plot.subtitle = element_text(hjust = 0.5, size = 14),
+              axis.title = element_text(size = 14),
+              axis.text = element_text(size = 12))
     }
   })
   
@@ -163,6 +226,79 @@ server <- function(input, output) {
              showlegend = TRUE,
              margin = list(l = 0, r = 0, b = 0, t = 0))
   })
+  
+  # Render Statistical Test Results
+  output$statResults <- renderTable({
+    req(input$statTestType)
+    
+    if (input$statTestType == "T-test") {
+      test_results <- data %>%
+        mutate(
+          t_statistic = Estimate / Std_Error,
+          p_value = 2 * (1 - pt(abs(t_statistic), df = nrow(data)-1))
+        ) %>%
+        select(Feature, Estimate, Std_Error, t_statistic, p_value)
+  
+    } else if (input$statTestType == "ANOVA") {
+      test_results <- data %>%
+        summarise(
+          F_statistic = var(Estimate) / var(Std_Error),
+          p_value = 1 - pf(F_statistic, df1 = nrow(data) - 1, df2 = nrow(data) - 1)
+        ) %>%
+        mutate(Feature = "Overall") %>%
+        select(Feature, F_statistic, p_value)
+    }
+    return(test_results)
+  })
+  
+  output$confIntervals <- renderTable({
+    data %>%
+      select(Feature, lower_ci, upper_ci)
+  })
+  
+  # Render Strongest Biomarkers Plot
+  output$strongestBiomarkersPlot <- renderPlot({
+    top_biomarkers <- head(data, 5)  # Select top 5 strongest biomarkers
+    ggplot(top_biomarkers, aes(x = reorder(Feature, Strength), y = Strength)) +
+      geom_bar(stat = "identity", fill = "darkorange") +
+      coord_flip() +
+      theme_minimal() +
+      labs(title = "Top Strongest Biomarkers",
+           subtitle = "Ranking based on strength metric (log(P-value) * Odds Ratio)") +
+      theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+            plot.subtitle = element_text(hjust = 0.5, size = 14),
+            axis.title = element_text(size = 14),
+            axis.text = element_text(size = 12))
+  })
+  
+  # Render Regression Plot
+  output$regressionPlot <- renderPlot({
+    # Create a simple linear model
+    model <- lm(Estimate ~ Std_Error, data = data)  # Corrected to 'Std_Error'
+    ggplot(data, aes(x = Std_Error, y = Estimate)) +
+      geom_point(color = "blue") +
+      geom_smooth(method = "lm", color = "red") +
+      theme_minimal() +
+      labs(title = "Regression Plot of Estimates vs. Standard Error",
+           x = "Standard Error",
+           y = "Estimate") +
+      theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"),
+            axis.title = element_text(size = 14),
+            axis.text = element_text(size = 12))
+  })
+  
+  # Report Generation
+  output$downloadReport <- downloadHandler(
+    filename = function() {
+      paste("biomarker_analysis_report", Sys.Date(), ".pdf", sep="")
+    },
+    content = function(file) {
+      rmarkdown::render("report_template.Rmd", 
+                        output_file = file,
+                        params = list(data = data),
+                        envir = new.env(parent = globalenv()))
+    }
+  )
 }
 
 # Run the application 
