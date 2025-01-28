@@ -222,24 +222,21 @@ ui <- fluidPage(
     
     mainPanel(
       tabsetPanel(
-        # New features at the start
-        tabPanel("Scatterplot Matrix",
-                 h4("Scatterplot Matrix of Health Features"),
-                 plotOutput("scatterplot_matrix")),
+        # Anomaly Detection tabs
+        tabPanel("Anomaly Detection - Z-Score",
+                 h4("Anomaly Detection Using Z-Score"),
+                 selectInput("z_score_feature", "Select Numeric Feature:", 
+                             choices = names(dfCardio)[sapply(dfCardio, is.numeric)]),
+                 plotOutput("z_score_plot"),
+                 plotOutput("z_score_anomalies")),
         
-        tabPanel("Residual Plots",
-                 h4("Residual Plots"),
-                 plotOutput("residual_plot"),
-                 plotOutput("influence_plot")),
-        
-        tabPanel("Added-Variable Plots",
-                 h4("Added-Variable Plots"),
-                 plotOutput("added_variable_plots")),
-        
-        tabPanel("Spread-Level Plot",
-                 h4("Spread-Level Plot"),
-                 plotOutput("spread_level_plot")),
-        
+        tabPanel("Anomaly Detection - IQR Method",
+                 h4("Anomaly Detection Using IQR Method"),
+                 selectInput("iqr_feature", "Select Numeric Feature:", 
+                             choices = names(dfCardio)[sapply(dfCardio, is.numeric)]),
+                 plotOutput("iqr_plot"),
+                 plotOutput("iqr_anomalies")),
+
         # Original visualization panels
         tabPanel("Scatter Plot of Glucose vs. Cholesterol",
                  h4("Glucose vs. Cholesterol Scatter Plot"),
@@ -464,6 +461,94 @@ server <- function(input, output, session) {
     list(nodes = nodes, edges = edges)
   }
   
+  # Anomaly Detection - Z-Score Method
+  output$z_score_plot <- renderPlot({
+    feature <- input$z_score_feature
+    data <- dfCardio[[feature]]
+    
+    # Calculate Z-Scores
+    z_scores <- (data - mean(data, na.rm = TRUE)) / sd(data, na.rm = TRUE)
+    threshold <- 3  # Commonly used threshold
+    
+    # Highlight anomalies
+    anomalies <- abs(z_scores) > threshold
+    
+    ggplot(data.frame(Value = data, Anomalies = anomalies), aes(x = Value, fill = Anomalies)) +
+      geom_histogram(bins = 30, alpha = 0.6, position = 'identity') +
+      labs(title = paste("Z-Score Anomaly Detection for", feature), 
+           x = feature, 
+           y = "Count") +
+      scale_fill_manual(values = c("lightblue", "red"), name = "Anomaly", labels = c("Normal", "Anomaly")) +
+      theme_minimal()
+  })
+  
+  output$z_score_anomalies <- renderPlot({
+    feature <- input$z_score_feature
+    data <- dfCardio[[feature]]
+    
+    # Calculate Z-Scores
+    z_scores <- (data - mean(data, na.rm = TRUE)) / sd(data, na.rm = TRUE)
+    threshold <- 3  # Commonly used threshold
+    
+    # Highlight anomalies
+    anomalies <- abs(z_scores) > threshold
+    
+    ggplot(dfCardio, aes_string(x = as.name(feature))) +
+      geom_boxplot(outlier.colour = ifelse(anomalies, "red", NA), 
+                   outlier.size = 3, outlier.shape = 8) +
+      labs(title = paste("Box Plot with Anomalies for", feature), 
+           x = feature, 
+           y = "Value") +
+      theme_minimal()
+  })
+
+  # Anomaly Detection - IQR Method
+  output$iqr_plot <- renderPlot({
+    feature <- input$iqr_feature
+    data <- dfCardio[[feature]]
+  
+    # Calculate IQR
+    Q1 <- quantile(data, 0.25, na.rm = TRUE)
+    Q3 <- quantile(data, 0.75, na.rm = TRUE)
+    IQR <- Q3 - Q1
+  
+    # Define limits
+    lower_bound <- Q1 - 1.5 * IQR
+    upper_bound <- Q3 + 1.5 * IQR
+  
+    # Create histogram
+    ggplot(dfCardio, aes_string(x = feature)) +
+      geom_histogram(bins = 30, fill = "lightblue", alpha = 0.6) +
+      geom_vline(xintercept = c(lower_bound, upper_bound), color = "red", linetype = "dashed") +
+      labs(title = paste("IQR Anomaly Detection for", feature), 
+           x = feature, 
+           y = "Count") +
+      theme_minimal()
+  })
+  
+  output$iqr_anomalies <- renderPlot({
+    feature <- input$iqr_feature
+    data <- dfCardio[[feature]]
+  
+    # Calculate IQR
+    Q1 <- quantile(data, 0.25, na.rm = TRUE)
+    Q3 <- quantile(data, 0.75, na.rm = TRUE)
+    IQR <- Q3 - Q1
+  
+    # Define limits
+    lower_bound <- Q1 - 1.5 * IQR
+    upper_bound <- Q3 + 1.5 * IQR
+  
+    # Create boxplot with anomalies
+    ggplot(dfCardio, aes_string(x = factor(1), y = feature)) +
+      geom_boxplot(outlier.colour = "red", outlier.size = 2, outlier.shape = 16) +
+      labs(title = paste("Box Plot with Anomalies for", feature), 
+           x = "", 
+           y = feature) +
+      theme_minimal() +
+      theme(axis.text.x = element_blank())
+  })
+
   # Global Regulatory Network (Messy version)
   output$global_reg_network <- renderVisNetwork({
     selected_data <- dfCardio[, input$selected_features]
