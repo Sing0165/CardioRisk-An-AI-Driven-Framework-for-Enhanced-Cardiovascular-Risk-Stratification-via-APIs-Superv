@@ -8,14 +8,13 @@ library(tm)
 library(wordcloud)
 library(RColorBrewer)
 library(syuzhet)
-library(plotly)  # Added for advanced visualizations
-library(cluster)  # For clustering
-library(dplyr)  # For data manipulation
-library(ggalluvial)  # For Sankey diagram
-library(igraph)  # For network graph
-library(reshape2)  # For reshaping data
-library(tidytext)  # For text mining
-library(dplyr)  # For data manipulation
+library(plotly)
+library(cluster)
+library(dplyr)
+library(ggalluvial)
+library(igraph)
+library(reshape2)
+library(tidytext)
 
 # Assuming dfCardio dataset is pre-loaded
 # dfCardio <- read.csv("path_to_your_dfCardio.csv")  # Uncomment and adapt to load your dataset
@@ -35,13 +34,14 @@ ui <- dashboardPage(
       menuItem("Cluster Analysis", tabName = "cluster_analysis", icon = icon("sitemap")),
       menuItem("User Classification", tabName = "user_classification", icon = icon("users")),
       menuItem("Advanced Visualizations", tabName = "advanced_visualizations", icon = icon("chart-bar")),
+      menuItem("Dynamic Emotion Flow", tabName = "emotion_flow", icon = icon("project-diagram")),
       menuItem("Time Spent Analysis", tabName = "time_spent_analysis", icon = icon("clock")),
       menuItem("Heatmap of Emotion Frequency", tabName = "emotion_heatmap", icon = icon("heat-map")),
       menuItem("Network Graph for User Interactions", tabName = "network_graph", icon = icon("project-diagram")),
       menuItem("Sankey Diagram for Emotion Flow", tabName = "sankey_diagram", icon = icon("stream")),
       menuItem("Facet Grid of Sentiment by User", tabName = "facet_grid", icon = icon("grip-horizontal")),
-      menuItem("Statistical Analysis", tabName = "statistical_analysis", icon = icon("calculator")),  # New tab
-      menuItem("Topic Modeling", tabName = "topic_modeling", icon = icon("lightbulb"))  # New tab for Topic Modeling
+      menuItem("Statistical Analysis", tabName = "statistical_analysis", icon = icon("calculator")),
+      menuItem("Topic Modeling", tabName = "topic_modeling", icon = icon("lightbulb"))
     ),
     width = 250
   ),
@@ -167,6 +167,14 @@ ui <- dashboardPage(
                   p("Interact with the plots for deeper insights.")
                 )
               )),
+      tabItem(tabName = "emotion_flow",
+              fluidRow(
+                box(
+                  title = "Dynamic Emotion Flow Across Patient Interactions", width = 12, status = "primary", solidHeader = TRUE,
+                  plotOutput("emotionFlowPlot", height = "600px"),
+                  p("This network visualization shows how emotional states evolve across interactions.")
+                )
+              )),
       tabItem(tabName = "time_spent_analysis",
               fluidRow(
                 box(
@@ -175,7 +183,6 @@ ui <- dashboardPage(
                   p("This plot analyzes the time spent across different conversation types.")
                 )
               )),
-      # New tabs for additional features
       tabItem(tabName = "emotion_heatmap",
               fluidRow(
                 box(
@@ -204,7 +211,7 @@ ui <- dashboardPage(
                   plotOutput("facetGridPlot", height = "600px")
                 )
               )),
-      tabItem(tabName = "statistical_analysis",  # New Statistical Analysis tab
+      tabItem(tabName = "statistical_analysis", 
               fluidRow(
                 box(
                   title = "Statistical Tests", width = 12, status = "primary", solidHeader = TRUE,
@@ -218,7 +225,7 @@ ui <- dashboardPage(
                   verbatimTextOutput("test_results")
                 )
               )),
-      tabItem(tabName = "topic_modeling",  # New Topic Modeling tab
+      tabItem(tabName = "topic_modeling",  
               fluidRow(
                 box(
                   title = "Topic Modeling", width = 12, status = "primary", solidHeader = TRUE,
@@ -264,10 +271,15 @@ server <- function(input, output, session) {
     return(unlist(strsplit(generateContent(prompt, api_key), "\n")))
   }
 
+  # Flagging negative interactions
+  generateEncouragement <- function() {
+    return("It's okay to feel this way! Remember, talking about your feelings is a great first step. Let's focus on positive next steps.")
+  }
+
   # Generate content from chatbot and perform sentiment analysis
   observeEvent(input$generateBtn, {
     user_text <- input$userInput
-    api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ"  # Replace with your actual API key
+    api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ" 
 
     if (user_text != "" && response_count() < 10) {
       # Generate response based on user input
@@ -294,6 +306,11 @@ server <- function(input, output, session) {
       response_emotions <- get_nrc_sentiment(response)
       response_emotion_index <- which(response_emotions[1, ] == max(response_emotions[1, ]))
       response_emotion_label <- if (length(response_emotion_index) > 0) colnames(response_emotions)[response_emotion_index[1]] else NA
+
+      # Check if user input is negative and sentiment is negative
+      if (user_sentiment_label == "Negative" && user_score < 0) {
+        response <- paste(response, generateEncouragement())
+      }
 
       # Update chat history with timestamp
       updated_history <- rbind(chat_history(), 
@@ -410,7 +427,7 @@ server <- function(input, output, session) {
 
   # Start generating questions based on user input
   observeEvent(input$generateQuestionsBtn, {
-    api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ" # Replace with your API key
+    api_key <- "AIzaSyA2SPN3LIko1zwCQU58YHmLMf56OUVejiQ" 
     if (!generate_questions()) {
       cvd_questions(generateCVDQuestions(api_key))
       generate_questions(TRUE)
@@ -436,7 +453,7 @@ server <- function(input, output, session) {
       answer <- input$answerInput
 
       if (answer != "") {
-        # Process the answer - for now just printing to console
+        # Process the answer - for now just printing to the console
         print(paste("User answered: ", answer))
         current_question_index(current_question_index() + 1)
         updateTextInput(session, "answerInput", value = "")
@@ -458,6 +475,10 @@ server <- function(input, output, session) {
     # Combine all messages into a single text corpus
     messages <- paste(chat_history()$Message, collapse = " ")
     messages_corpus <- Corpus(VectorSource(messages))
+    
+    # Check for empty corpus
+    if (nchar(messages) < 1) return(NULL)
+
     messages_corpus <- tm_map(messages_corpus, content_transformer(tolower))
     messages_corpus <- tm_map(messages_corpus, removePunctuation)
     messages_corpus <- tm_map(messages_corpus, removeNumbers)
@@ -470,7 +491,13 @@ server <- function(input, output, session) {
     word_freqs_df <- data.frame(word = names(word_freqs), freq = word_freqs)
 
     # Generate the word cloud
-    wordcloud(words = word_freqs_df$word, freq = word_freqs_df$freq, min.freq = 1, max.words = 100, random.order = FALSE, rot.per = 0.35, colors = brewer.pal(8, "Dark2"))
+    wordcloud(words = word_freqs_df$word, 
+              freq = word_freqs_df$freq, 
+              min.freq = 1, 
+              max.words = 100, 
+              random.order = FALSE, 
+              rot.per = 0.35, 
+              colors = brewer.pal(8, "Dark2"))
   })
 
   # Render the Emotion Score Consistency plot
@@ -571,7 +598,7 @@ server <- function(input, output, session) {
     sentiment_data <- data.frame(Sentiment = chat_history()$Sentiment, Timestamp = chat_history()$timestamp)
     sentiment_summary <- sentiment_data %>%
       group_by(Timestamp = as.Date(Timestamp)) %>%
-      summarise(SentimentCount = n())
+      summarise(SentimentCount = n(), .groups = "drop")
 
     plot_ly(sentiment_summary, x = ~Timestamp, y = ~SentimentCount, type = 'scatter', mode = 'lines+markers', name = 'Sentiment') %>%
       layout(title = "Sentiment Over Time", xaxis = list(title = "Date"), yaxis = list(title = "Count"))
@@ -581,17 +608,38 @@ server <- function(input, output, session) {
     emotion_data <- data.frame(Emotion = chat_history()$Emotion, Timestamp = chat_history()$timestamp)
     emotion_summary <- emotion_data %>%
       group_by(Timestamp = as.Date(Timestamp), Emotion) %>%
-      summarise(Count = n())
+      summarise(Count = n(), .groups = "drop")
 
     plot_ly(emotion_summary, x = ~Timestamp, y = ~Count, color = ~Emotion, type = 'bar') %>%
       layout(title = "Emotion Distribution Over Time", xaxis = list(title = "Date"), yaxis = list(title = "Count"))
+  })
+
+  # Dynamic Emotion Flow Visualization
+  output$emotionFlowPlot <- renderPlot({
+    if (nrow(chat_history()) > 1) {
+      # Create edges for emotional transitions
+      emotion_flow_data <- chat_history() %>%
+        select(timestamp, Emotion) %>%
+        mutate(next_Emotion = lead(Emotion)) %>%
+        na.omit()
+
+      # Create a network graph
+      g <- graph_from_data_frame(emotion_flow_data, directed = TRUE)
+
+      # Plot the emotional flow
+      plot(g, vertex.label = V(g)$name, vertex.size = 5, vertex.color = "skyblue", edge.arrow.size = 0.5,
+           main = "Dynamic Emotion Flow Across Patient Interactions")
+    } else {
+      plot.new()
+      text(0.5, 0.5, "Not enough data for the emotion flow visualization.", cex = 1.5)
+    }
   })
 
   # Time Spent Analysis
   output$timeSpentPlot <- renderPlot({
     time_data <- chat_history() %>%
       group_by(Role) %>%
-      summarise(TotalMessages = n(), TotalTime = difftime(max(timestamp), min(timestamp), units = "mins"))
+      summarise(TotalMessages = n(), TotalTime = difftime(max(timestamp), min(timestamp), units = "mins"), .groups = "drop")
 
     ggplot(time_data, aes(x = Role, y = TotalTime, fill = Role)) +
       geom_col() +
@@ -620,8 +668,8 @@ server <- function(input, output, session) {
       colnames(edge_list) <- c("from", "to")
 
       g <- graph_from_data_frame(edge_list, directed = TRUE)
-      plot(g, vertex.size=5, vertex.color="skyblue", edge.arrow.size=0.5, 
-           main="Network Graph of User Interactions", layout=layout_with_fr)
+      plot(g, vertex.size = 5, vertex.color = "skyblue", edge.arrow.size = 0.5, 
+           main = "Network Graph of User Interactions", layout = layout_with_fr)
     } else {
       plot.new()
       text(0.5, 0.5, "Not enough data for a network graph.", cex = 1.5)
