@@ -303,3 +303,1151 @@ server <- function(input, output) {
 
 # Run the application 
 shinyApp(ui = ui, server = server)
+
+
+
+library(shiny)
+library(shinycssloaders)
+library(DT)
+library(tidyverse)
+library(visNetwork)
+library(igraph)
+library(ggplot2)
+library(PRROC)
+library(plotly)
+library(reshape2)
+library(broom)
+library(GGally)   # For scatterplot matrix
+library(car)      # For residual plots and influence plots
+library(gridExtra)   # For arranging multiple grid plots
+library(xgboost)  # For XGBoost modeling
+library(rpart)    # For decision tree model
+library(rpart.plot)  # For plotting decision trees
+library(DiagrammeR)  # For a clearer decision tree diagram
+
+# Assuming dfCardio is defined elsewhere in your code
+# dfCardio <- read.csv("path_to_your_data.csv")  # Your actual data frame should be assigned here
+
+# Perform Differential Expression Analysis (DEA)
+perform_dea <- function(data) {
+  features <- data %>% select(age, height, weight, ap_hi, ap_lo, gluc)  # Excluded cholesterol
+  dea_results <- lapply(features, function(feature) {
+    t_test_result <- t.test(feature ~ data$cardio)
+    mean_group_1 <- mean(feature[data$cardio == 1])
+    mean_group_0 <- mean(feature[data$cardio == 0])
+    sd_group_1 <- sd(feature[data$cardio == 1])
+    sd_group_0 <- sd(feature[data$cardio == 0])
+    data.frame(
+      Feature = deparse(substitute(feature)),
+      p_value = t_test_result$p.value,
+      logFC = mean_group_1 - mean_group_0,
+      adj_p_value = p.adjust(t_test_result$p.value, method = "BH"),
+      mean_group_1 = round(mean_group_1, 2),
+      mean_group_0 = round(mean_group_0, 2),
+      sd_group_1 = round(sd_group_1, 2),
+      sd_group_0 = round(sd_group_0, 2)
+    )
+  })
+  do.call(rbind, dea_results)
+}
+
+# Identify biomarkers function using logistic regression
+identify_biomarkers <- function(data) {
+  features <- data %>% select(-cardio)  # Exclude target variable
+  results <- sapply(features, function(feature) {
+    model <- glm(data$cardio ~ feature, family = binomial)
+    p_value <- summary(model)$coefficients[2, 4]  # p-value for the feature
+    return(p_value)
+  })
+  
+  biomarker_results <- data.frame(Feature = names(results), P_Value = results)
+  biomarker_results$Significant <- biomarker_results$P_Value < 0.05  # Adjust significance level
+  
+  # Organize and format biomarker results table for clarity
+  biomarker_results <- biomarker_results %>%
+    arrange(P_Value) %>%
+    mutate(P_Value = format(round(P_Value, 4), nsmall = 4), 
+           Significant = ifelse(Significant, "Yes", "No"))
+  
+  # Clean up and rename columns for better clarity
+  colnames(biomarker_results) <- c("Feature", "P-Value", "Significant")
+  
+  biomarker_results
+}
+
+# Helper function for generating forest plot data
+generate_forest_plot_data <- function(model) {
+  coef_summary <- summary(model)$coefficients
+  forest_data <- data.frame(
+    Variable = rownames(coef_summary),
+    Estimate = coef_summary[, "Estimate"],
+    Lower_CI = coef_summary[, "Estimate"] - 1.96 * coef_summary[, "Std. Error"],
+    Upper_CI = coef_summary[, "Estimate"] + 1.96 * coef_summary[, "Std. Error"],
+    P_Value = coef_summary[, "Pr(>|z|)"]
+  )
+  forest_data <- forest_data %>%
+    filter(Variable != "(Intercept)")  # Remove intercept
+  forest_data
+}
+
+# Create a function to get cholesterol levels categorized.
+get_cholesterol_levels <- function(data) {
+  cholesterol_counts <- table(data$cholesterol)
+  data.frame(Level = names(cholesterol_counts), Count = as.vector(cholesterol_counts))
+}
+
+# Function to create a Manhattan plot
+create_manhattan_plot <- function(data, feature) {
+  results <- identify_biomarkers(data)
+  results <- results %>% filter(Feature == feature)
+  
+  ggplot(results, aes(x = Feature, y = -log10(P_Value), label = Feature)) +
+    geom_bar(stat = "identity", fill = "blue") +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red") +
+    labs(title = paste("Manhattan Plot for", feature),
+         x = "Features",
+         y = "-log10(P-Value)") +
+    theme_minimal()
+}
+
+# Shiny App UI
+ui <- fluidPage(
+  tags$head(
+    tags$style(HTML("
+      body {
+        font-family: 'Arial', sans-serif;
+        background-color: #f0f2f5;
+        margin: 0;
+        padding: 0;
+      }
+      .navbar {
+        background-color: #007bff;
+        border-bottom: 2px solid #0056b3;
+        color: white;
+      }
+      .navbar-brand {
+        color: white !important;
+        font-weight: bold;
+      }
+      h4 {
+        color: #007bff;
+        font-weight: bold;
+        text-align: center;
+        padding-top: 15px;
+      }
+      .tab-pane {
+        padding: 20px;
+        border: 1px solid #007bff;
+        border-radius: 5px;
+        background-color: white;
+      }
+      .btn-primary {
+        background-color: #007bff;
+        border-color: #007bff;
+        font-weight: 600;
+        height: 45px;
+        margin-bottom: 15px;
+      }
+      .btn-primary:hover {
+        background-color: #0056b3;
+        border-color: #0056b3;
+      }
+      .highlight {
+        background-color: #d6e9f9;
+      }
+      .metric-title {
+        font-weight: bold;
+        font-size: 1.5em;
+        color: #007bff;
+        text-align: center;
+      }
+      .form-group {
+        margin-bottom: 20px;
+      }
+      .checkbox-group label {
+        font-size: 16px;
+        margin-right: 15px;
+      }
+      .tabset-panel {
+        margin-top: 20px;
+      }
+      h5 {
+        color: #343a40;
+        font-weight: bold;
+      }
+      p {
+        color: #5a5a5a;
+        line-height: 1.6;
+      }
+      .table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      .table th, .table td {
+        padding: 8px;
+        text-align: left;
+        border: 1px solid #dee2e6;
+      }
+      .table thead th {
+        background-color: #007bff;
+        color: white;
+      }
+      .table tbody tr:hover {
+        background-color: #f1f1f1;
+      }
+      .plotly {
+        margin: 20px 0;
+      }
+      .box {
+        background: #f9f9f9;
+        border: 1px solid #007bff;
+        padding: 15px;
+        margin-bottom: 15px;
+      }
+    "))
+  ),
+  
+  titlePanel("Health Data Visualization and Model Comparison"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      checkboxGroupInput("selected_features", 
+                         "Select Features for Network Analysis:", 
+                         choices = c("age", "gender", "height", "weight", "ap_hi", "ap_lo", 
+                                     "gluc", "smoke", "alco", "active", "cardio"),
+                         selected = c("age", "gender", "active"),
+                         inline = TRUE),
+      selectInput("metric", "Choose Metric", choices = c("Precision", "Recall", "F1 Score", "Accuracy")),
+      actionButton("showGraph", "Show Graph", class = "btn-primary"),
+      actionButton("showPRGraph", "Show 3D Precision-Recall Curve", class = "btn-primary"),
+      actionButton("showPR2DGraph", "Show 2D Precision-Recall Curve", class = "btn-primary"),
+      actionButton("simulateTrajectory", "Simulate Lifespan Risk Trajectory", class = "btn-primary"),
+      actionButton("run_regression", "Run Multivariable Regression & Statistical Tests", class = "btn-primary"),
+      actionButton("run_xgboost", "Run XGBoost Model", class = "btn-primary"),
+      actionButton("run_decision_tree", "Show Decision Tree", class = "btn-primary")  # Button for decision tree
+    ),
+    
+    mainPanel(
+      tabsetPanel(
+        # New features at the start
+        tabPanel("Scatterplot Matrix",
+                 h4("Scatterplot Matrix of Health Features"),
+                 plotOutput("scatterplot_matrix")),
+        
+        tabPanel("Residual Plots",
+                 h4("Residual Plots"),
+                 plotOutput("residual_plot"),
+                 plotOutput("influence_plot")),
+        
+        tabPanel("Added-Variable Plots",
+                 h4("Added-Variable Plots"),
+                 plotOutput("added_variable_plots")),
+        
+        tabPanel("Spread-Level Plot",
+                 h4("Spread-Level Plot"),
+                 plotOutput("spread_level_plot")),
+        
+        # Original visualization panels
+        tabPanel("Scatter Plot of Glucose vs. Cholesterol",
+                 h4("Glucose vs. Cholesterol Scatter Plot"),
+                 plotOutput("glucose_cholesterol_scatter")),
+        
+        tabPanel("Boxplot of Glucose and Cholesterol by Risk Level",
+                 h4("Boxplot of Glucose and Cholesterol by Diabetes Risk Level"),
+                 plotOutput("boxplot_glucose_cholesterol")),
+        
+        tabPanel("Heatmap of Glucose and Cholesterol Correlation",
+                 h4("Heatmap of Glucose and Cholesterol Correlation"),
+                 plotOutput("heatmap_glucose_cholesterol")),
+                 
+        tabPanel("Density Plot for Glucose and Cholesterol",
+                 h4("Density Plot (KDE) of Glucose and Cholesterol"),
+                 plotOutput("kde_glucose_cholesterol")),
+                 
+        tabPanel("Average Glucose and Cholesterol by Risk Level",
+                 h4("Bar Plot of Average Glucose and Cholesterol by Risk Level"),
+                 plotOutput("average_glucose_cholesterol")),
+        
+        tabPanel("Global Regulatory Network",
+                 h4("Global Regulatory Network Explanation"),
+                 p("This network shows the relationships between different health features."), 
+                 visNetworkOutput("global_reg_network")),
+        
+        uiOutput("dynamic_tabs"),
+        
+        tabPanel("Differential Expression Analysis",
+                 h4("Differential Expression Analysis (DEA) Results"),
+                 DTOutput("dea_table")),
+        
+        tabPanel("Biomarker Discovery",
+                 h4("Biomarker Discovery Results"),
+                 DTOutput("biomarker_table")),
+        
+        tabPanel("Biomarker Analysis",
+                 h4("Biomarker Regression Analysis"),
+                 verbatimTextOutput("biomarker_regression_summary"),
+                 plotlyOutput("biomarker_regression_plot")),
+        
+        tabPanel("Ontology Model",
+                 h4("Ontology Model Visualization"),
+                 visNetworkOutput("ontology_network")),
+        
+        tabPanel("Clustering Coefficient Network",
+                 h4("Clustering Coefficient Network Visualization"),
+                 visNetworkOutput("clustering_coefficient_network")),
+        
+        tabPanel("Model Metrics",
+                 h4("Model Performance Metrics"),
+                 plotlyOutput("metricGraph", height = "600px")),
+        
+        tabPanel("Precision-Recall Curves",
+                 h4("3D Precision-Recall Curves"),
+                 plotlyOutput("prPlot3D", height = "600px")),
+        
+        tabPanel("Precision-Recall Curves 2D",
+                 h4("2D Precision-Recall Curves"),
+                 plotlyOutput("prPlot2D", height = "600px")),
+        
+        tabPanel("All Metrics Comparison",
+                 h4("Comparison of All Metrics Across Models"),
+                 plotlyOutput("allMetricsGraph", height = "600px")),
+        
+        tabPanel("Lifespan Risk Trajectory Simulation",
+                 h4("Simulation of Lifespan and Risk Trajectory"),
+                 plotlyOutput("lifespanTrajectoryPlot", height = "600px")),
+        
+        tabPanel("3D PCA Visualization",
+                 h4("3D PCA Visualizations"),
+                 plotlyOutput("pcaPlot1", height = "600px"),
+                 plotlyOutput("pcaPlot2", height = "600px"),
+                 plotlyOutput("pcaPlot3", height = "600px")),
+        
+        tabPanel("Statistical Tests",
+                 fluidRow(
+                   column(6,
+                     box(title = "Chi-Squared Test", status = "primary", solidHeader = TRUE, 
+                         actionButton("run_chisq_test", "Run Chi-Squared Test"),
+                         verbatimTextOutput("chisq_result"),
+                         DTOutput("chisq_table"))
+                   ),
+                   column(6,
+                     box(title = "T-Tests", status = "primary", solidHeader = TRUE,
+                         actionButton("run_t_test", "Run T-Test"),
+                         verbatimTextOutput("t_test_result"),
+                         DTOutput("t_test_table"))
+                   )
+                 ),
+                 fluidRow(
+                   column(6,
+                     box(title = "ANOVA", status = "primary", solidHeader = TRUE,
+                         verbatimTextOutput("anova_result"),
+                         DTOutput("anova_table"))
+                   ),
+                   column(6,
+                     box(title = "Mann-Whitney U Test", status = "primary", solidHeader = TRUE,
+                         actionButton("run_mann_whitney", "Run Mann-Whitney U Test"),
+                         verbatimTextOutput("mann_whitney_result"),
+                         DTOutput("mann_whitney_table"))
+                   )
+                 ),
+                 fluidRow(
+                   column(6,
+                     box(title = "Kruskal-Wallis Test", status = "primary", solidHeader = TRUE,
+                         actionButton("run_kruskal_test", "Run Kruskal-Wallis Test"),
+                         verbatimTextOutput("kruskal_result"),
+                         DTOutput("kruskal_table"))
+                   ),
+                   column(6,
+                     box(title = "Kolmogorov-Smirnov Test", status = "primary", solidHeader = TRUE,
+                         actionButton("run_ks_test", "Run Kolmogorov-Smirnov Test"),
+                         verbatimTextOutput("ks_result"),
+                         DTOutput("ks_table"))
+                   )
+                 ),
+                 fluidRow(
+                   column(12,
+                     box(title = "Multivariate Analysis of Variance (MANOVA)", 
+                         status = "primary", solidHeader = TRUE,
+                         actionButton("run_manova_test", "Run MANOVA"),
+                         verbatimTextOutput("manova_result"),
+                         DTOutput("manova_table"))
+                   )
+                 ),
+                 fluidRow(
+                   column(12,
+                     box(title = "Path Analysis", 
+                         status = "primary", solidHeader = TRUE,
+                         actionButton("run_path_analysis", "Run Path Analysis"),
+                         verbatimTextOutput("path_analysis_result"),
+                         DTOutput("path_analysis_table"))
+                   )
+                 )
+        ),
+        
+        # Multivariable Regression Tab
+        tabPanel("Multivariable Regression",
+                 h4("Multivariable Regression Results"),
+                 verbatimTextOutput("multivariable_regression_result"),
+                 DTOutput("multivariable_regression_table")),
+                 
+        # New Forest Plots Tab
+        tabPanel("Forest Plots",
+                 h4("Forest Plot of Biomarkers"),
+                 plotOutput("forestPlot")),
+        
+        # Manhattan Plots Tab
+        tabPanel("Manhattan Plots",
+                 h4("Manhattan Plots for Biomarkers"),
+                 plotOutput("manhattan_plots")), 
+
+        tabPanel("Cholesterol Levels",
+                 h4("Bar Plot of Cholesterol Levels"),
+                 plotOutput("cholesterol_bar_plot")),
+        
+        tabPanel("Blood Pressure by Gender",
+                 h4("Box Plot of Blood Pressure by Gender"),
+                 plotOutput("blood_pressure_box_plot")),
+        
+        tabPanel("Age Distribution Histogram",
+                 h4("Histogram of Age Distribution"),
+                 plotOutput("age_histogram")),
+        
+        tabPanel("XGBoost Model Metrics",  # New tab for XGBoost model metrics
+                 h4("XGBoost Model Metrics Results"),
+                 verbatimTextOutput("xgb_model_summary"),
+                 verbatimTextOutput("xgb_metrics_summary"),
+                 # New tab for Decision Tree Visualization
+                 uiOutput("decision_tree_ui"),  # Decision tree output
+                 plotOutput("decision_tree_plot")),  # Plot for the decision tree
+
+        # New tabs for network architectures
+        tabPanel("XGBoost Network Architecture",
+                 h4("XGBoost Model Architecture"),
+                 visNetworkOutput("xgb_network")),
+        
+        tabPanel("Multivariable Regression Network Architecture",
+                 h4("Multivariable Regression Model Architecture"),
+                 visNetworkOutput("multi_reg_network"))
+      )
+    )
+  )
+)
+
+# Define server logic
+server <- function(input, output, session) {
+  
+  # Helper function to perform DEA
+  dea_results <- perform_dea(dfCardio)
+
+  # Helper function to create complex and messy regulatory networks
+  create_messy_network <- function(data, threshold = 0.1, focus = NULL) {
+    correlations <- cor(data, use = "complete.obs")
+    edge_list <- which(abs(correlations) > threshold & correlations != 1, arr.ind = TRUE)
+    edges <- data.frame(
+      from = rownames(correlations)[edge_list[, 1]],
+      to = colnames(correlations)[edge_list[, 2]],
+      weight = correlations[edge_list]
+    )
+    
+    if (!is.null(focus)) {
+      edges <- edges %>% filter(from == focus | to == focus)
+    }
+    
+    nodes <- data.frame(
+      id = unique(c(edges$from, edges$to)),
+      label = unique(c(edges$from, edges$to)),
+      color = sample(c("red", "green", "blue", "purple", "orange", "yellow"), 
+                     length(unique(c(edges$from, edges$to))), replace = TRUE)
+    )
+    
+    list(nodes = nodes, edges = edges)
+  }
+  
+  # Global Regulatory Network (Messy version)
+  output$global_reg_network <- renderVisNetwork({
+    selected_data <- dfCardio[, input$selected_features]
+    network <- create_messy_network(selected_data, threshold = 0.1)
+    visNetwork(network$nodes, network$edges) %>%
+      visEdges(arrows = "to", smooth = FALSE) %>%
+      visOptions(highlightNearest = list(enabled = TRUE, degree = 2)) %>%
+      visPhysics(solver = "repulsion") %>%
+      visLayout(randomSeed = 123)
+  })
+  
+  # Dynamically generate tabs for each selected feature
+  output$dynamic_tabs <- renderUI({
+    feature_tabs <- lapply(input$selected_features, function(feature) {
+      tabPanel(
+        paste(feature, "Regulatory Network"), 
+        visNetworkOutput(paste0(feature, "_network"))
+      )
+    })
+    do.call(tabsetPanel, feature_tabs)
+  })
+  
+  # Render individual regulatory networks for each feature
+  observe({
+    lapply(input$selected_features, function(feature) {
+      output[[paste0(feature, "_network")]] <- renderVisNetwork({
+        selected_data <- dfCardio[, input$selected_features]
+        network <- create_messy_network(selected_data, threshold = 0.1, focus = feature)
+        visNetwork(network$nodes, network$edges) %>%
+          visEdges(arrows = "to", smooth = FALSE) %>%
+          visOptions(highlightNearest = list(enabled = TRUE)) %>%
+          visPhysics(solver = "repulsion") %>%
+          visLayout(randomSeed = 123)
+      })
+    })
+  })
+  
+  # Render DEA table with expanded information
+  output$dea_table <- renderDT({
+    datatable(dea_results, options = list(
+      pageLength = 10, 
+      autoWidth = TRUE,
+      dom = 'Bfrtip',
+      buttons = c('copy', 'csv', 'excel')
+    ), 
+    class = "display", 
+    rownames = FALSE)
+  })
+  
+  # Biomarker Discovery results
+  output$biomarker_table <- renderDT({
+    biomarker_results <- identify_biomarkers(dfCardio)
+    datatable(biomarker_results, options = list(
+      pageLength = 10, 
+      autoWidth = TRUE,
+      dom = 'Bfrtip',
+      buttons = c('copy', 'csv', 'excel')
+    ), 
+    class = "display", 
+    rownames = FALSE)
+  })
+  
+  # Regression Analysis for Biomarkers
+  output$biomarker_regression_summary <- renderPrint({
+    biomarker_results <- identify_biomarkers(dfCardio)
+    regression_results <- lapply(biomarker_results$Feature, function(feature) {
+      model <- glm(cardio ~ get(feature), data = dfCardio, family = binomial)
+      summary(model)$coefficients
+    })
+    regression_results_df <- do.call(rbind, lapply(seq_along(regression_results), 
+                                      function(i) {
+      data.frame(Feature = biomarker_results$Feature[i],
+                 Estimate = regression_results[[i]][2, 1],
+                 Std_Error = regression_results[[i]][2, 2],
+                 z_value = regression_results[[i]][2, 3],
+                 P_Value = regression_results[[i]][2, 4])
+    }))
+    
+    print(regression_results_df)
+  })
+  
+  output$biomarker_regression_plot <- renderPlotly({
+    biomarker_results <- identify_biomarkers(dfCardio)
+    regression_results <- lapply(biomarker_results$Feature, function(feature) {
+      model <- glm(cardio ~ get(feature), data = dfCardio, family = binomial)
+      summary(model)$coefficients[2, ] # Coefficients
+    })
+ 
+    regression_results_df <- data.frame(
+      Feature = biomarker_results$Feature,
+      Coefficient = sapply(regression_results, function(x) x[1]),
+      P_Value = sapply(regression_results, function(x) x[4])
+    )
+    
+    plot_ly(regression_results_df, x = ~Feature, y = ~Coefficient, type = 'bar', 
+            text = ~paste("P-Value: ", round(P_Value, 4)),
+            hoverinfo = "text") %>%
+      layout(title = "Regression Coefficients of Biomarkers",
+             xaxis = list(title = "Features"),
+             yaxis = list(title = "Coefficient"),
+             showlegend = FALSE)
+  })
+  
+  # Create and render ontology network visualization
+  output$ontology_network <- renderVisNetwork({
+    feature_names <- c("Age", "Height", "Weight", "Blood Pressure", "Glucose", "Activity Level", "Smoking", "Alcohol", "Cardiovascular Disease")
+    
+    edges <- data.frame(
+      from = c("Age", "Height", "Weight", "Blood Pressure", "Glucose", "Activity Level", "Smoking", "Alcohol"),
+      to = rep("Cardiovascular Disease", 9)
+    )
+    
+    nodes <- data.frame(
+      id = feature_names,
+      label = feature_names,
+      color = rep("lightblue", length(feature_names))
+    )
+    
+    visNetwork(nodes, edges) %>%
+      visEdges(arrows = "to") %>%
+      visOptions(highlightNearest = TRUE) %>%
+      visPhysics(solver = "repulsion") %>%
+      visLayout(randomSeed = 123)
+  })
+  
+  # Create and render clustering coefficient network visualization
+  output$clustering_coefficient_network <- renderVisNetwork({
+    selected_data <- dfCardio[, input$selected_features]
+    correlation_matrix <- cor(selected_data, use = "complete.obs")
+    
+    # Create igraph object and compute clustering coefficient
+    graph <- graph_from_adjacency_matrix(correlation_matrix, mode = "undirected", weighted = TRUE, diag = FALSE)
+    
+    clustering_coeffs <- transitivity(graph, type = "local")
+    V(graph)$clustering_coeff <- clustering_coeffs
+    
+    # Create edge and node data frames
+    edges <- as.data.frame(get.edgelist(graph))
+    colnames(edges) <- c("from", "to")
+    
+    nodes <- data.frame(
+      id = V(graph)$name,
+      label = V(graph)$name,
+      clustering_coefficient = V(graph)$clustering_coeff,
+      color = "lightgreen"
+    )
+    
+    visNetwork(nodes, edges) %>%
+      visEdges(arrows = "to", smooth = FALSE, width = 1, color = list(highlight = "red")) %>%
+      visOptions(highlightNearest = list(enabled = TRUE, degree = 1)) %>%
+      visPhysics(solver = "repulsion") %>%
+      visLayout(randomSeed = 123)
+  })
+  
+  # Load confusion matrices for model performance
+  logistic_regression <- c(TP = 4480, TN = 5493, FP = 2328, FN = 1455)
+  random_forest <- c(TP = 4595, TN = 5484, FP = 2213, FN = 1464)
+  knn <- c(TP = 4045, TN = 5290, FP = 2763, FN = 1658)
+  naive_bayes <- c(TP = 4045, TN = 5290, FP = 2763, FN = 1658)
+  decision_tree <- c(TP = 4462, TN = 5495, FP = 2346, FN = 1453)
+  
+  # Function to calculate precision-recall values using thresholds
+  calculate_pr_curve <- function(TP, FP, FN, TN, model_name) {
+    true_labels <- rep(c(1, 0), c(TP + FN, FP + TN))  # True labels
+    predicted_scores <- c(rep(1, TP), rep(0, FP), rep(1, FN), rep(0, TN))  # Predicted probabilities
+  
+    # Calculate Precision-Recall curve
+    pr <- pr.curve(scores.class0 = predicted_scores[true_labels == 1], 
+                   scores.class1 = predicted_scores[true_labels == 0], 
+                   curve = TRUE)
+    
+    data.frame(
+      Recall = pr$curve[, 1], 
+      Precision = pr$curve[, 2], 
+      Threshold = pr$curve[, 3],
+      Model = model_name
+    )
+  }
+  
+  # Generate Precision-Recall data for each model
+  pr_data <- rbind(
+    calculate_pr_curve(logistic_regression["TP"], logistic_regression["FP"], 
+                       logistic_regression["FN"], logistic_regression["TN"], "Logistic Regression"),
+    calculate_pr_curve(random_forest["TP"], random_forest["FP"], 
+                       random_forest["FN"], random_forest["TN"], "Random Forest"),
+    calculate_pr_curve(knn["TP"], knn["FP"], 
+                       knn["FN"], knn["TN"], "KNN"),
+    calculate_pr_curve(naive_bayes["TP"], naive_bayes["FP"], 
+                       naive_bayes["FN"], naive_bayes["TN"], "Naive Bayes"),
+    calculate_pr_curve(decision_tree["TP"], decision_tree["FP"], 
+                       decision_tree["FN"], decision_tree["TN"], "Decision Tree")
+  )
+  
+  # Calculate accuracy for each model
+  accuracy <- c(
+    Logistic = (logistic_regression["TP"] + logistic_regression["TN"]) / sum(logistic_regression),
+    RandomForest = (random_forest["TP"] + random_forest["TN"]) / sum(random_forest),
+    KNN = (knn["TP"] + knn["TN"]) / sum(knn),
+    NaiveBayes = (naive_bayes["TP"] + naive_bayes["TN"]) / sum(naive_bayes),
+    DecisionTree = (decision_tree["TP"] + decision_tree["TN"]) / sum(decision_tree)
+  )
+  
+  # Map the accuracy values to the pr_data
+  pr_data$Accuracy <- factor(pr_data$Model, levels = names(accuracy))
+  pr_data$Accuracy <- accuracy[pr_data$Accuracy]
+  
+  # Define metrics for each model
+  metrics <- data.frame(
+    Model = c("Logistic Regression", "Random Forest", "KNN", "Naive Bayes", "Decision Tree"),
+    Precision = c(4480 / (4480 + 2328), 4595 / (4595 + 2213), 4045 / (4045 + 2763), 4045 / (4045 + 2763), 4462 / (4462 + 2346)),
+    Recall = c(4480 / (4480 + 1455), 4595 / (4595 + 1464), 4045 / (4045 + 1658), 4045 / (4045 + 1658), 4462 / (4462 + 1453)),
+    F1_Score = c(2 * (4480 / (4480 + 2328)) * (4480 / (4480 + 1455)) / ((4480 / (4480 + 2328)) + (4480 / (4480 + 1455))),
+                 2 * (4595 / (4595 + 2213)) * (4595 / (4595 + 1464)) / ((4595 / (4595 + 2213)) + (4595 / (4595 + 1464))),
+                 2 * (4045 / (4045 + 2763)) * (4045 / (4045 + 1658)) / ((4045 / (4045 + 2763)) + (4045 / (4045 + 1658))),
+                 2 * (4045 / (4045 + 2763)) * (4045 / (4045 + 1658)) / ((4045 / (4045 + 2763)) + (4045 / (4045 + 1658))),
+                 2 * (4462 / (4462 + 2346)) * (4462 / (4462 + 1453)) / ((4462 / (4462 + 2346)) + (4462 / (4462 + 1453)))
+    ),
+    Accuracy = accuracy
+  )
+  
+  output$prPlot3D <- renderPlotly({
+    plot_ly(pr_data, x = ~Recall, y = ~Precision, z = ~Threshold, color = ~Model, 
+            text = ~paste("Accuracy: ", round(Accuracy, 2)), 
+            type = "scatter3d", mode = "lines+markers", 
+            line = list(width = 2), marker = list(size = 5)) %>%
+      layout(
+        title = "3D Precision-Recall Curves with Accuracy",
+        scene = list(
+          xaxis = list(title = "Recall (True Positive Rate)", showgrid = TRUE, zeroline = FALSE),
+          yaxis = list(title = "Precision (Positive Predictive Value)", showgrid = TRUE, zeroline = FALSE),
+          zaxis = list(title = "Threshold", showgrid = TRUE, zeroline = FALSE)
+        ),
+        legend = list(title = list(text = "Model (Accuracy)"), 
+                      tracegroupgap = 5),
+        annotations = list(
+          list(
+            x = 0.5, y = 0.5, z = 0.5,
+            text = "Precision-Recall Curves",
+            showarrow = FALSE, font = list(size = 16, color = "black")
+          )
+        )
+      )
+  })
+  
+  output$prPlot2D <- renderPlotly({
+    req(input$showPR2DGraph)
+    
+    plot_ly(pr_data, x = ~Recall, y = ~Precision, color = ~Model, 
+            type = "scatter", mode = "lines+markers",
+            text = ~paste("Accuracy: ", round(Accuracy, 2)), 
+            marker = list(size = 5)) %>%
+      layout(
+        title = "2D Precision-Recall Curves",
+        xaxis = list(title = "Recall", showgrid = TRUE),
+        yaxis = list(title = "Precision", showgrid = TRUE),
+        legend = list(title = list(text = "Model (Accuracy)"))
+      )
+  })
+  
+  output$metricGraph <- renderPlotly({
+    req(input$showGraph)
+    metric_col <- switch(input$metric, "Precision" = "Precision", "Recall" = "Recall", "F1 Score" = "F1_Score", "Accuracy" = "Accuracy")
+    
+    plot_ly(metrics, x = ~Model, y = metrics[[metric_col]], type = "bar", color = metrics$Model, 
+            text = ~paste(metric_col, ": ", round(metrics[[metric_col]], 2)),
+            hoverinfo = "text") %>%
+      layout(
+        title = paste("Bar Graph of", input$metric),
+        xaxis = list(title = "Model", showgrid = TRUE, zeroline = FALSE),
+        yaxis = list(title = input$metric, showgrid = TRUE, zeroline = FALSE),
+        legend = list(title = list(text = "Model"))
+      )
+  })
+
+  output$allMetricsGraph <- renderPlotly({
+    metrics_long <- melt(metrics, id.vars = "Model", 
+                          measure.vars = c("Precision", "Recall", "F1_Score", "Accuracy"))
+    
+    plot_ly(metrics_long, x = ~Model, y = ~value, color = ~variable, type = 'bar', 
+            text = ~paste(variable, ": ", round(value, 2)),
+            hoverinfo = "text") %>%
+      layout(
+        title = "Comparison of All Metrics Across Models",
+        xaxis = list(title = "Model", showgrid = TRUE),
+        yaxis = list(title = "Value", showgrid = TRUE),
+        barmode = 'group'
+      )
+  })
+  
+  # PCA visualization
+  perform_pca <- function(data) {
+    pca_res <- prcomp(data, center = TRUE, scale. = TRUE)
+    pca_data <- as.data.frame(pca_res$x[, 1:3])  # Taking the first three principal components
+    pca_data$cardio <- data$cardio  # Adding the target variable for color encoding
+    return(pca_data)
+  }
+  
+  # Render multiple PCA plots
+  pca_data <- perform_pca(dfCardio[, sapply(dfCardio, is.numeric)])  # Numeric columns only
+  
+  # PCA Plot 1
+  output$pcaPlot1 <- renderPlotly({
+    plot_ly(pca_data, x = ~PC1, y = ~PC2, z = ~PC3, color = ~cardio, 
+            colors = c('blue', 'red'), 
+            type = 'scatter3d', mode = 'markers', 
+            marker = list(size = 3)) %>%
+      layout(title = "PCA Visualization: PC1 vs PC2 vs PC3",
+             scene = list(xaxis = list(title = "Principal Component 1"), 
+                          yaxis = list(title = "Principal Component 2"), 
+                          zaxis = list(title = "Principal Component 3")))
+  })
+  
+  # PCA Plot 2 (example with different aesthetics)
+  output$pcaPlot2 <- renderPlotly({
+    plot_ly(pca_data, x = ~PC1, y = ~PC2, z = ~PC3, color = ~cardio, 
+            colors = c('green', 'orange'), 
+            type = 'scatter3d', mode = 'markers', 
+            marker = list(size = 5, line = list(width = 0.5, color = 'black'))) %>%
+      layout(title = "PCA Visualization Variant: PC1 vs PC2 vs PC3 with different colors",
+             scene = list(xaxis = list(title = "Principal Component 1"), 
+                          yaxis = list(title = "Principal Component 2"), 
+                          zaxis = list(title = "Principal Component 3")))
+  })
+  
+  # PCA Plot 3 (example with different color scheme)
+  output$pcaPlot3 <- renderPlotly({
+    plot_ly(pca_data, x = ~PC1, y = ~PC2, color = ~cardio, 
+            type = 'scatter', mode = 'markers', 
+            marker = list(size = 5, color = ~cardio)) %>%
+      layout(title = "2D PCA Visualization: PC1 vs PC2",
+             xaxis = list(title = "Principal Component 1"),
+             yaxis = list(title = "Principal Component 2"))
+  })
+
+  # Lifespan and Risk Trajectory simulation
+  observeEvent(input$simulateTrajectory, {
+    # Example simulation data; replace with actual model predictions if available
+    lifespan <- seq(50, 90, by = 1)  # Age from 50 to 90
+    risk <- exp(-0.03 * (lifespan - 50)) / (1 + exp(-0.03 * (lifespan - 70)))  # Simulated risk function
+    
+    # Create a data frame for plotting
+    trajectory_data <- data.frame(Age = lifespan, Risk = risk)
+    
+    output$lifespanTrajectoryPlot <- renderPlotly({
+      plot_ly(trajectory_data, x = ~Age, y = ~Risk, type = 'scatter', mode = 'lines+markers', 
+              line = list(color = 'blue'), marker = list(size = 5)) %>%
+        layout(title = "Lifespan and Risk Trajectory Simulation",
+               xaxis = list(title = "Age"),
+               yaxis = list(title = "Predicted Risk"),
+               showlegend = FALSE)
+    })
+  })
+
+  # Statistical Tests
+  observeEvent(input$run_chisq_test, {
+    chisq_test_result <- chisq.test(table(dfCardio$gender, dfCardio$cardio))
+    output$chisq_result <- renderPrint({
+      chisq_test_result
+    })
+    
+    chisq_table <- data.frame(Observed = chisq_test_result$observed,
+                               Expected = chisq_test_result$expected,
+                               Residuals = chisq_test_result$residuals,
+                               check.names = FALSE)
+    output$chisq_table <- renderDT({
+      datatable(chisq_table, options = list(pageLength = 10, autoWidth = TRUE))
+    })
+  })
+
+  observeEvent(input$run_t_test, {
+    t_test_result <- t.test(dfCardio$age ~ dfCardio$cardio)
+    output$t_test_result <- renderPrint({
+      t_test_result
+    })
+
+    t_test_table <- data.frame(Mean_Group1 = mean(dfCardio$age[dfCardio$cardio == 1]),
+                                Mean_Group0 = mean(dfCardio$age[dfCardio$cardio == 0]),
+                                SD_Group1 = sd(dfCardio$age[dfCardio$cardio == 1]),
+                                SD_Group0 = sd(dfCardio$age[dfCardio$cardio == 0]),
+                                p_value = t_test_result$p.value,
+                                confidence_interval = paste(round(t_test_result$conf.int[1], 2), 
+                                                             "to", 
+                                                             round(t_test_result$conf.int[2], 2)))
+    output$t_test_table <- renderDT({
+      datatable(t_test_table, options = list(pageLength = 5, autoWidth = TRUE))
+    })
+  })
+  
+  observeEvent(input$run_manova_test, {
+    manova_result <- manova(cbind(ap_hi, ap_lo, gluc) ~ cardio + smoke + active, data = dfCardio)
+    output$manova_result <- renderPrint({
+      summary(manova_result)
+    })
+
+    manova_table <- summary(manova_result)
+    output$manova_table <- renderDT({
+      datatable(as.data.frame(manova_table), options = list(pageLength = 5, autoWidth = TRUE))
+    })
+  })
+
+  observeEvent(input$run_regression, {
+    # Define and fit the multivariable logistic regression model
+    multi_model <<- glm(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, 
+                       data = dfCardio, family = binomial)
+    
+    # Get the summary of the model
+    output$multivariable_regression_result <- renderPrint({
+      summary(multi_model)
+    })
+    
+    # Perform ANOVA on the logistic regression model
+    anova_model <- anova(multi_model, test = "Chisq")
+    output$anova_result <- renderPrint({
+      anova_model
+    })
+
+    anova_table <- as.data.frame(anova_model)
+
+    # Create a results table for regression coefficients
+    regression_summary <- summary(multi_model)$coefficients
+    regression_table <- as.data.frame(regression_summary) %>%
+      rownames_to_column("Variable") %>%
+      rename(Estimate = Estimate, Std_Error = `Std. Error`, z_value = `z value`, P_Value = `Pr(>|z|)`) %>%
+      mutate(Significant = ifelse(P_Value < 0.05, "Yes", "No")) %>%
+      mutate(P_Value = format(round(P_Value, 4), nsmall = 4))  # Format P-Value for clarity
+
+    # Render the regression results table
+    output$multivariable_regression_table <- renderDT({
+      datatable(regression_table, 
+                options = list(pageLength = 10, autoWidth = TRUE, 
+                               dom = 'Bfrtip', 
+                               buttons = c('copy', 'csv', 'excel')), 
+                class = "display", 
+                rownames = FALSE)
+    })
+    
+    # Generate and render the forest plot for the multivariable regression model
+    forest_data <- generate_forest_plot_data(multi_model)
+
+    output$forestPlot <- renderPlot({
+      ggplot(forest_data, aes(x = Variable, y = Estimate, ymin = Lower_CI, ymax = Upper_CI)) +
+        geom_pointrange() +
+        geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+        coord_flip() +
+        labs(title = "Forest Plot of Biomarkers Effect Sizes",
+             x = "Biomarkers",
+             y = "Odds Ratio (with 95% CI)") +
+        theme_minimal()
+    })
+  })
+
+  # Render Manhattan plots for each feature
+  output$manhattan_plots <- renderPlot({
+    feature_names <- colnames(dfCardio)[-which(colnames(dfCardio) == "cardio")]
+    
+    # Create a Manhattan plot for each feature
+    plots <- lapply(feature_names, function(feature) {
+      create_manhattan_plot(dfCardio, feature)
+    })
+    
+    # Combine the plots into one output
+    gridExtra::grid.arrange(grobs = plots, ncol = 2)
+  })
+  
+  # New Visualizations
+  
+  # Glucose vs. Cholesterol Scatter Plot
+  output$glucose_cholesterol_scatter <- renderPlot({
+    ggplot(dfCardio, aes(x = gluc, y = cholesterol, color = cardio)) +
+      geom_point(alpha = 0.6) +
+      geom_smooth(method = "lm") +
+      labs(title = "Scatter Plot of Glucose vs. Cholesterol",
+           x = "Glucose Level",
+           y = "Cholesterol Level") +
+      theme_minimal()
+  })
+  
+  # Boxplot of Glucose and Cholesterol by Risk Level
+  output$boxplot_glucose_cholesterol <- renderPlot({
+    dfCardio$mRisk <- cut(dfCardio$gluc, 
+                          breaks = c(-Inf, 100, 140, 160, Inf), 
+                          labels = c("Low", "Moderate", "High", "Very High"))
+    df_long <- dfCardio %>% 
+      gather(key = "Variable", value = "Value", gluc, cholesterol)
+    
+    ggplot(df_long, aes(x = mRisk, y = Value, fill = Variable)) +
+      geom_boxplot() +
+      scale_fill_manual(values = c("lightblue", "orange")) +
+      labs(title = "Boxplot of Glucose and Cholesterol by Risk Level",
+           x = "Diabetes Risk Level",
+           y = "Value") +
+      theme_minimal()
+  })
+  
+  # Heatmap of Glucose and Cholesterol Correlation
+  output$heatmap_glucose_cholesterol <- renderPlot({
+    correlation_matrix <- cor(dfCardio[c("gluc", "cholesterol")], use = "complete.obs")
+    
+    ggplot(melt(correlation_matrix), aes(Var1, Var2)) +
+      geom_tile(aes(fill = value), color = "white") +
+      scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                           limit = c(-1, 1), midpoint = 0) +
+      geom_text(aes(label = round(value, 2)), color = "black", size = 10) +
+      labs(title = "Correlation Heatmap of Glucose and Cholesterol",
+           x = "", y = "") +
+      theme_minimal()
+  })
+  
+  # Density Plot (KDE) for Glucose and Cholesterol
+  output$kde_glucose_cholesterol <- renderPlot({
+    dfCardio$mRisk <- cut(dfCardio$gluc, 
+                          breaks = c(-Inf, 100, 140, 160, Inf), 
+                          labels = c("Low", "Moderate", "High", "Very High"))
+    
+    ggplot(dfCardio, aes(x = gluc, fill = mRisk)) +
+      geom_density(alpha = 0.6) +
+      labs(title = "KDE of Glucose Levels by Risk Level",
+           x = "Glucose Level",
+           y = "Density") +
+      theme_minimal()
+  })
+  
+  # Bar Plot of Average Glucose and Cholesterol by Diabetes Risk Level
+  output$average_glucose_cholesterol <- renderPlot({
+    avg_values <- dfCardio %>%
+      group_by(mRisk) %>%
+      summarise(Avg_Glucose = mean(gluc, na.rm = TRUE),
+                Avg_Cholesterol = mean(cholesterol, na.rm = TRUE)) %>%
+      pivot_longer(cols = c(Avg_Glucose, Avg_Cholesterol), names_to = "Variable", values_to = "Average")
+
+    ggplot(avg_values, aes(x = mRisk, y = Average, fill = Variable)) +
+      geom_bar(stat = "identity", position = "dodge") +
+      labs(title = "Average Glucose and Cholesterol by Diabetes Risk Level",
+           x = "Diabetes Risk Level",
+           y = "Average Value") +
+      theme_minimal()
+  })
+ 
+  # Cholesterol Levels Bar Plot
+  output$cholesterol_bar_plot <- renderPlot({
+    cholesterol_levels <- get_cholesterol_levels(dfCardio)
+    ggplot(cholesterol_levels, aes(x = Level, y = Count)) +
+      geom_bar(stat = "identity", fill = "steelblue") +
+      ggtitle("Bar Plot of Cholesterol Levels") +
+      xlab("Cholesterol Level") +
+      ylab("Count")
+  })
+  
+  # Box Plot of Blood Pressure by Gender
+  output$blood_pressure_box_plot <- renderPlot({
+    ggplot(dfCardio, aes(x = factor(gender), y = ap_hi)) +
+      geom_boxplot(fill = "lightblue") +
+      labs(x = "Gender", y = "Systolic Blood Pressure (Ap_hi)") +
+      ggtitle("Box Plot of Blood Pressure by Gender")
+  })
+  
+  # Histogram of Age Distribution
+  output$age_histogram <- renderPlot({
+    ggplot(dfCardio, aes(x = age)) +
+      geom_histogram(binwidth = 1, fill = "lightgreen", color = "black") +
+      labs(x = "Age", y = "Count") +
+      ggtitle("Histogram of Age Distribution")
+  })
+  
+  # Scatterplot Matrix
+  output$scatterplot_matrix <- renderPlot({
+    ggpairs(dfCardio[, c("age", "weight", "height", "ap_hi", "ap_lo")],
+             title = "Scatterplot Matrix of Health Features")
+  })
+  
+  # Residual Plots
+  output$residual_plot <- renderPlot({
+    resid_model <<- lm(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, data = dfCardio)
+    plot(resid_model, which = 1, main = "Residuals vs Fitted")
+  })
+  
+  output$influence_plot <- renderPlot({
+    influencePlot(resid_model, main="Influence Plot")
+  })
+  
+  # Added-Variable Plots
+  output$added_variable_plots <- renderPlot({
+    plot(AddedVariablePlot(resid_model))
+  })
+  
+  # Spread-Level Plot
+  output$spread_level_plot <- renderPlot({
+    spreadLevelPlot(resid_model)
+  })
+
+  # XGBoost model
+  observeEvent(input$run_xgboost, {
+    # Prepare data for XGBoost
+    dfCardio$xgb_data <- dfCardio %>%
+      mutate(cardio = as.numeric(cardio)) %>%
+      select(-cardio)  # Exclude target variable
+    
+    # Create dummy variables for categorical variables
+    dfCardio$xgb_data <- model.matrix(~ ., data=dfCardio$xgb_data)[, -1]
+    
+    # Split data into train and test sets
+    set.seed(123)
+    train_index <- sample(1:nrow(dfCardio$xgb_data), 0.8 * nrow(dfCardio$xgb_data))
+    
+    xgb_train <- dfCardio$xgb_data[train_index,]
+    xgb_test <- dfCardio$xgb_data[-train_index,]
+    
+    y_train <- dfCardio$cardio[train_index]
+    y_test <- dfCardio$cardio[-train_index]
+    
+    # Train the XGBoost model
+    xgb_model <- xgboost(data = xgb_train, label = y_train, 
+                         nrounds = 100, objective = "binary:logistic", 
+                         eval_metric = "logloss", verbose = 0)
+
+    # Predictions
+    xgb_pred <- predict(xgb_model, xgb_test)
+    xgb_pred_class <- ifelse(xgb_pred > 0.5, 1, 0)
+
+    # Confusion Matrix and summary metrics
+    cm <- table(Predicted = xgb_pred_class, Actual = y_test)
+    accuracy <- sum(diag(cm)) / sum(cm)
+    precision <- cm[2,2] / sum(cm[2,])
+    recall <- cm[2,2] / sum(cm[,2])
+    
+    output$xgb_model_summary <- renderPrint({
+      print(xgb_model)
+    })
+    
+    output$xgb_metrics_summary <- renderPrint({
+      cat("Accuracy:", round(accuracy, 4), "\n")
+      cat("Precision:", round(precision, 4), "\n")
+      cat("Recall:", round(recall, 4), "\n")
+    })
+
+    # Create decision tree for XGBoost model
+    xgb_tree <- rpart(cardio ~ ., data = dfCardio[train_index, ], method = "class")
+    
+    output$decision_tree_plot <- renderPlot({
+      rpart.plot(xgb_tree, main = "Decision Tree for XGBoost Model", 
+                 extra = 1, 
+                 box.col = c("coral", "lightblue")[xgb_tree$frame$yval])
+    })
+
+    # Create XGBoost network architecture visualization
+    xgb_network_data <- create_messy_network(dfCardio[, c("age", "height", "weight", "ap_hi", "ap_lo", "gluc", "smoke", "cardio")])
+    output$xgb_network <- renderVisNetwork({
+      visNetwork(xgb_network_data$nodes, xgb_network_data$edges) %>%
+        visEdges(arrows = "to", smooth = FALSE) %>%
+        visOptions(highlightNearest = list(enabled = TRUE, degree = 2)) %>%
+        visPhysics(solver = "repulsion") %>%
+        visLayout(randomSeed = 123)
+    })
+  })
+  
+  # Decision tree for multivariable regression
+  observeEvent(input$run_decision_tree, {
+    dt_model <- rpart(cardio ~ age + height + weight + ap_hi + ap_lo + gluc + smoke + alco + active, 
+                      data = dfCardio, method = "class")
+    
+    output$decision_tree_ui <- renderUI({
+      plotOutput("decision_tree_plot")
+    })
+    
+    output$decision_tree_plot <- renderPlot({
+      rpart.plot(dt_model, main = "Decision Tree for Multivariable Model", 
+                 extra = 1, 
+                 box.col = c("coral", "lightblue")[dt_model$frame$yval])
+    })
+
+    # Create multivariable regression model architecture visualization
+    multi_reg_network_data <- create_messy_network(dfCardio[, c("age", "height", "weight", "ap_hi", "ap_lo", "gluc", "smoke", "cardio")])
+    output$multi_reg_network <- renderVisNetwork({
+      visNetwork(multi_reg_network_data$nodes, multi_reg_network_data$edges) %>%
+        visEdges(arrows = "to", smooth = FALSE) %>%
+        visOptions(highlightNearest = list(enabled = TRUE, degree = 2)) %>%
+        visPhysics(solver = "repulsion") %>%
+        visLayout(randomSeed = 123)
+    })
+  })
+}
+
+# Run the application
+shinyApp(ui = ui, server = server)
+
+
+
+
