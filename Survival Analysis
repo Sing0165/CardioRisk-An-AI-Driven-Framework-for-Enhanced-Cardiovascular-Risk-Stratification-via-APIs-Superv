@@ -1,0 +1,190 @@
+# Load necessary libraries
+library(shiny)
+library(tidyverse)
+library(survival)
+library(survminer)
+
+# Read the dataset
+all_df <- read_csv('../input/heart-failure-clinical-data/heart_failure_clinical_records_dataset.csv', col_types = cols()) %>%
+    mutate(
+        anaemia = factor(ifelse(anaemia == 1, "anaemic", "non-anaemic"), levels = c("non-anaemic", "anaemic")),
+        diabetes = factor(ifelse(diabetes == 1, "diabetic", "non-diabetic"), levels = c("non-diabetic", "diabetic")),
+        high_blood_pressure = factor(ifelse(high_blood_pressure == 1, "high-bp", "non-high-bp"), levels = c("non-high-bp", "high-bp")),
+        sex = factor(ifelse(sex == 0, "female", "male"), levels = c("female", "male")),
+        smoking = factor(ifelse(smoking == 0, "non-smoker", "smoker"), levels = c("non-smoker", "smoker")),
+        platelets = platelets / 1e4,
+        creatinine_phosphokinase = creatinine_phosphokinase / 1e3
+    )
+
+# Define UI for the application
+ui <- fluidPage(
+    tags$head(
+        # Add custom CSS for styling
+        tags$style(HTML("
+            body {
+                background-color: #2C3E50;
+                color: white;
+            }
+            h3 {
+                color: #1ABC9C;
+            }
+            .panel-heading {
+                background-color: #1ABC9C;
+                color: white;
+            }
+            .well {
+                background-color: #34495E;
+                border-color: #1ABC9C;
+            }
+            .shiny-input-container {
+                color: white;
+            }
+            .tab-pane {
+                background-color: #34495E;
+            }
+            .btn {
+                background-color: #1ABC9C;
+                color: white;
+            }
+            .btn:hover {
+                background-color: #16A085;
+                color: white;
+            }
+        "))
+    ),
+    
+    titlePanel("Heart Failure Clinical Data Analysis"),
+    
+    sidebarLayout(
+        sidebarPanel(
+            tabsetPanel(
+                type = "pills",
+                id = "tabset",
+                tabPanel("Survival Model Inputs",
+                    h3("Cox Proportional Hazards Model"),
+                    selectInput("smoking", "Smoking Status:", 
+                                choices = c("smoker", "non-smoker")),
+                    sliderInput("age", "Age:", min = 40, max = 95, value = 60, step = 1, sep = ""),
+                    actionButton("update", "Update Survival Plot")
+                ),
+                tabPanel("About",
+                    h3("About this Application"),
+                    p("This application allows users to analyze heart failure clinical data."),
+                    p("Users can visualize survival models and perform analyses based on smoking status.")
+                )
+            )
+        ),
+        mainPanel(
+            tabsetPanel(
+                type = "tabs",
+                tabPanel("Censoring Samples", plotOutput("plot_censoring")),
+                tabPanel("Censored vs Deaths", plotOutput("plot_censoring_deaths")),
+                tabPanel("Time-to-event Distribution", plotOutput("plot_distribution")),
+                tabPanel("Kaplan-Meier Estimate", plotOutput("plot_km"), plotOutput("plot_km_smoking")),
+                tabPanel("Cox Model Survival Estimate", plotOutput("plot_cox_model")),
+                tabPanel("Cox Model Check", plotOutput("cox_zph_plot"))
+            )
+        )
+    )
+)
+
+# Define server logic
+server <- function(input, output) {
+
+    output$plot_censoring <- renderPlot({
+        plot_censoring <- all_df %>%
+            group_by(DEATH_EVENT) %>%
+            sample_n(3) %>%
+            ungroup() %>%
+            select(time, DEATH_EVENT)
+
+        plot_censoring %>%
+            mutate(
+                time_start = 0, 
+                case_id = factor(1:nrow(plot_censoring)),
+                death_event = factor(ifelse(DEATH_EVENT == 1, "death", "censored"))
+            ) %>%
+            pivot_longer(cols = c(time, time_start),
+                         names_to = "source",
+                         values_to = "time") %>%
+            ggplot(aes(x = time, y = case_id, group = factor(case_id))) + 
+            geom_bar(stat = "identity", aes(fill = death_event), colour = "black", width = 0.3) +
+            ggtitle("Time till Death/Censoring - 6 sampled cases from dataset") + 
+            theme(plot.title = element_text(size = 22), 
+                  legend.title = element_text(size = 18), 
+                  legend.text = element_text(size = 16), 
+                  axis.title = element_text(size = 16),
+                  panel.background = element_rect(fill = "#34495E"))
+    })
+
+    output$plot_censoring_deaths <- renderPlot({
+        all_df %>%
+            mutate(event_type = factor(ifelse(DEATH_EVENT == 1, "death", "censored"))) %>%
+            group_by(event_type) %>%
+            tally(name = "count") %>%
+            ggplot(aes(x = event_type, y = count)) + 
+            geom_bar(stat = "identity", fill = "#1ABC9C", width = 0.2, colour = "black") +
+            ggtitle("Censored vs Deaths") + 
+            theme(plot.title = element_text(size = 22),  
+                  axis.title = element_text(size = 16),
+                  panel.background = element_rect(fill = "#34495E"))
+    })
+
+    output$plot_distribution <- renderPlot({
+        all_df %>%
+            mutate(event_type = factor(ifelse(DEATH_EVENT == 1, "death", "censored"))) %>%
+            select(event_type, time) %>%
+            ggplot(aes(x = time, colour = event_type)) + 
+            geom_density() + 
+            ggtitle("Distribution of time-to-event by type of event (Censored vs Deaths)") + 
+            theme(plot.title = element_text(size = 22),  
+                  axis.title = element_text(size = 16), 
+                  legend.title = element_text(size = 18), 
+                  legend.text = element_text(size = 16),
+                  panel.background = element_rect(fill = "#34495E"))
+    })
+
+    output$plot_km <- renderPlot({
+        km_model <- survfit(Surv(time, DEATH_EVENT) ~ 1, data = all_df)
+        ggsurvplot(km_model, data = all_df, risk.table = TRUE, 
+                   break.time.by = 10, size = 0.3, tables.height = 0.15)
+    })
+
+    output$plot_km_smoking <- renderPlot({
+        km_model_smoking <- all_df %>%
+            survfit(Surv(time, DEATH_EVENT) ~ smoking, data = .)
+        ggsurvplot(km_model_smoking, data = all_df, risk.table = TRUE, 
+                   break.time.by = 10, size = 0.3, tables.height = 0.20)
+    })
+
+    observeEvent(input$update, {
+        compare_smoking_median_age <- tibble(
+            age = rep(input$age, 2), 
+            anaemia = factor(c("anaemic", "non-anaemic"), levels = levels(all_df$anaemia)),
+            creatinine_phosphokinase = rep(median(all_df$creatinine_phosphokinase), 2),
+            diabetes = factor(c("diabetic", "non-diabetic"), levels = levels(all_df$diabetes)),
+            ejection_fraction = rep(median(all_df$ejection_fraction), 2),
+            high_blood_pressure = factor(c("high-bp", "non-high-bp"), levels = levels(all_df$high_blood_pressure)),
+            platelets = rep(median(all_df$platelets), 2), 
+            smoking = factor(c(input$smoking, ifelse(input$smoking == "smoker", "non-smoker", "smoker")), levels = levels(all_df$smoking)), 
+            sex = factor(c("male", "female"), levels = levels(all_df$sex))
+        )
+        
+        output$plot_cox_model <- renderPlot({
+            cox_model <- coxph(Surv(time, DEATH_EVENT) ~ age + anaemia + creatinine_phosphokinase + 
+                               diabetes + ejection_fraction + high_blood_pressure + platelets + smoking + sex, 
+                               data = all_df)
+            ggsurvplot(survfit(cox_model, newdata = compare_smoking_median_age), conf.int = TRUE)
+        })
+        
+        output$cox_zph_plot <- renderPlot({
+            cox_model <- coxph(Surv(time, DEATH_EVENT) ~ age + anaemia + creatinine_phosphokinase + 
+                               diabetes + ejection_fraction + high_blood_pressure + platelets + smoking + sex, 
+                               data = all_df)
+            ggcoxzph(cox.zph(cox_model))
+        })
+    })
+}
+
+# Run the application 
+shinyApp(ui = ui, server = server)
