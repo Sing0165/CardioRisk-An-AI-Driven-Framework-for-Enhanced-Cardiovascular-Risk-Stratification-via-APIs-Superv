@@ -137,6 +137,7 @@ server <- function(input, output) {
             ggplot(aes(x = time, colour = event_type)) + 
             geom_density() + 
             ggtitle("Distribution of time-to-event by type of event (Censored vs Deaths)") + 
+            scale_color_manual(values = c("death" = "#E74C3C", "censored" = "#3498DB")) +  # Change line colors
             theme(plot.title = element_text(size = 22),  
                   axis.title = element_text(size = 16), 
                   legend.title = element_text(size = 18), 
@@ -146,15 +147,20 @@ server <- function(input, output) {
 
     output$plot_km <- renderPlot({
         km_model <- survfit(Surv(time, DEATH_EVENT) ~ 1, data = all_df)
-        ggsurvplot(km_model, data = all_df, risk.table = TRUE, 
-                   break.time.by = 10, size = 0.3, tables.height = 0.15)
+        ggsurvplot(km_model, data = all_df, risk.table = TRUE,
+                   break.time.by = 10, size = 1,               # Adjust line size
+                   conf.int = TRUE,
+                   palette = "#9B59B6",                       # Change line color for KM plot
+                   tables.height = 0.15)
     })
 
     output$plot_km_smoking <- renderPlot({
-        km_model_smoking <- all_df %>%
-            survfit(Surv(time, DEATH_EVENT) ~ smoking, data = .)
+        km_model_smoking <- survfit(Surv(time, DEATH_EVENT) ~ smoking, data = all_df)
         ggsurvplot(km_model_smoking, data = all_df, risk.table = TRUE, 
-                   break.time.by = 10, size = 0.3, tables.height = 0.20)
+                   break.time.by = 10, size = 1,               # Adjust line size
+                   conf.int = TRUE,
+                   palette = c("#E74C3C", "#3498DB"),          # Change line colors for smoking status
+                   tables.height = 0.20)
     })
 
     observeEvent(input$update, {
@@ -174,7 +180,8 @@ server <- function(input, output) {
             cox_model <- coxph(Surv(time, DEATH_EVENT) ~ age + anaemia + creatinine_phosphokinase + 
                                diabetes + ejection_fraction + high_blood_pressure + platelets + smoking + sex, 
                                data = all_df)
-            ggsurvplot(survfit(cox_model, newdata = compare_smoking_median_age), conf.int = TRUE)
+            ggsurvplot(survfit(cox_model, newdata = compare_smoking_median_age), conf.int = TRUE,  
+                       palette = c("#E74C3C", "#3498DB"))  # Change colors of the survival curves based on smoking status
         })
         
         output$cox_zph_plot <- renderPlot({
@@ -187,4 +194,7 @@ server <- function(input, output) {
 }
 
 # Run the application 
+
+
+
 shinyApp(ui = ui, server = server)
